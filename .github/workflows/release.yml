@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          pnpm install --frozen-lockfile
+          if (-not (Test-Path "node_modules/electron/dist/electron.exe")) {
+            node node_modules/electron/install.js
+          }
+
+      - name: Build application package
+        shell: pwsh
+        run: node node_modules/electron-builder/out/cli/cli.js --dir
+
+      - name: Prepare update assets
+        shell: pwsh
+        run: node scripts/make-update-assets.js
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            release/app.asar `
+            release/update.json `
+            --title "云栖音乐 $env:GITHUB_REF_NAME" `
+            --generate-notes

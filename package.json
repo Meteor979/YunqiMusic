@@ -1,0 +1,46 @@
+{
+  "name": "yunqi-music",
+  "version": "0.1.3",
+  "description": "A focused desktop music player for NetEase Cloud Music.",
+  "author": "Yunqi Music",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Meteor979/YunqiMusic.git"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "main": "src/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "pack:dir": "electron-builder --dir",
+    "update:assets": "node scripts/make-update-assets.js",
+    "dist": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "NeteaseCloudMusicApi": "4.32.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.yunqi.music",
+    "productName": "云栖音乐",
+    "asar": true,
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "src/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "portable"
+      ],
+      "artifactName": "Yunqi-Music-${version}-portable.${ext}"
+    }
+  }
+}
