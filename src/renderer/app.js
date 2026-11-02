@@ -66,7 +66,6 @@ const el = {
   queuePanel: $('#queue-panel'),
   queueList: $('#queue-list'),
   queueEmpty: $('#queue-empty'),
-  queueCount: $('#queue-count'),
   queueDuration: $('#queue-duration'),
   queueSummary: $('#queue-summary-label'),
   profileButton: $('#profile-button'),
@@ -99,6 +98,7 @@ const el = {
   loudnessToggle: $('#loudness-toggle'),
   equalizerPresets: $('#equalizer-presets'),
   toastStack: $('#toast-stack'),
+  tooltip: $('#app-tooltip'),
 }
 
 const icons = {
@@ -130,6 +130,8 @@ let normalizerGain = null
 let compressor = null
 let equalizerNodes = []
 let saveAudioTimer = null
+let tooltipTarget = null
+let tooltipTimer = null
 
 function escapeHTML(value = '') {
   return String(value)
@@ -210,6 +212,44 @@ function showToast(message, duration = 2800) {
 
 function setRangeFill(range, percentage) {
   range.style.setProperty('--range-progress', `${Math.max(0, Math.min(100, percentage))}%`)
+}
+
+function hideTooltip() {
+  if (tooltipTimer) {
+    window.clearTimeout(tooltipTimer)
+    tooltipTimer = null
+  }
+  tooltipTarget = null
+  el.tooltip.classList.remove('is-visible')
+}
+
+function showTooltip(target) {
+  const text = target.dataset.tooltip
+  if (!text) return
+  tooltipTarget = target
+  el.tooltip.textContent = text
+  const placement = target.dataset.tooltipPlacement || 'top'
+  el.tooltip.dataset.placement = placement
+  const rect = target.getBoundingClientRect()
+
+  if (placement === 'right') {
+    el.tooltip.style.left = `${rect.right + 9}px`
+    el.tooltip.style.top = `${rect.top + rect.height / 2}px`
+  } else {
+    const center = rect.left + rect.width / 2
+    el.tooltip.style.left = `${Math.max(10, center)}px`
+    el.tooltip.style.top =
+      placement === 'bottom' ? `${rect.bottom + 3}px` : `${rect.top - 3}px`
+  }
+  el.tooltip.classList.add('is-visible')
+}
+
+function scheduleTooltip(target) {
+  if (tooltipTimer) window.clearTimeout(tooltipTimer)
+  tooltipTarget = target
+  tooltipTimer = window.setTimeout(() => {
+    if (tooltipTarget === target) showTooltip(target)
+  }, 180)
 }
 
 function dbToGain(value) {
@@ -359,7 +399,8 @@ function setEqualizerPreset(name) {
 function updatePlayButton() {
   const markup = state.playing ? icons.pause : icons.play
   el.playButton.innerHTML = markup
-  el.playButton.title = state.playing ? '暂停' : '播放'
+  el.playButton.dataset.tooltip = state.playing ? '暂停' : '播放'
+  el.playButton.setAttribute('aria-label', state.playing ? '暂停' : '播放')
   el.app.classList.toggle('is-playing', state.playing)
 }
 
@@ -837,7 +878,7 @@ function updateLyricAtTime(time) {
   const active = el.lyricsList.querySelector('.lyric-line.is-active')
   if (active) {
     const target =
-      active.offsetTop - el.lyricsScroll.clientHeight * 0.37 + active.clientHeight / 2
+        active.offsetTop - el.lyricsScroll.clientHeight * 0.27 + active.clientHeight / 2
     el.lyricsScroll.scrollTo({
       top: Math.max(0, target),
       behavior: 'smooth',
@@ -1167,7 +1208,6 @@ function queueItem(track, index) {
 }
 
 function renderQueue() {
-  el.queueCount.textContent = String(state.queue.length)
   el.queueSummary.textContent = state.queue.length
     ? state.queueMode === 'roam'
       ? `漫游队列 · ${state.queue.length} 首`
@@ -1411,6 +1451,29 @@ function cycleRepeatMode() {
 }
 
 function bindEvents() {
+  document.addEventListener('pointerover', (event) => {
+    const target = event.target.closest?.('[data-tooltip]')
+    if (target && target !== tooltipTarget) scheduleTooltip(target)
+  })
+  document.addEventListener('pointerout', (event) => {
+    const target = event.target.closest?.('[data-tooltip]')
+    if (
+      target &&
+      (!event.relatedTarget || !target.contains(event.relatedTarget))
+    ) {
+      hideTooltip()
+    }
+  })
+  document.addEventListener('focusin', (event) => {
+    const target = event.target.closest?.('[data-tooltip]')
+    if (target) scheduleTooltip(target)
+  })
+  document.addEventListener('focusout', hideTooltip)
+  document.addEventListener('click', hideTooltip)
+  window.addEventListener('blur', hideTooltip)
+  window.addEventListener('resize', hideTooltip)
+  document.addEventListener('scroll', hideTooltip, true)
+
   $('#window-minimize').addEventListener('click', api.minimize)
   $('#window-maximize').addEventListener('click', api.toggleMaximize)
   $('#window-close').addEventListener('click', api.close)

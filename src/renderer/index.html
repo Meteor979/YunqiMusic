@@ -94,7 +94,9 @@
       <header class="titlebar" id="titlebar">
         <div class="titlebar-drag">
           <div class="wordmark">
-            <span class="brand-orbit" aria-hidden="true"><i></i></span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 1024 1024"><path d="M274 492C366 294 438 294 512 474C586 654 658 654 750 456" /></svg>
+            </span>
             <span>云栖音乐</span>
           </div>
           <span class="titlebar-separator"></span>
@@ -102,10 +104,10 @@
         </div>
 
         <div class="titlebar-actions">
-          <button class="icon-button subtle" id="top-search-button" title="搜索（Ctrl+K）">
+          <button class="icon-button subtle" id="top-search-button" data-tooltip="搜索" data-tooltip-placement="bottom" aria-label="搜索">
             <svg><use href="#icon-search"></use></svg>
           </button>
-          <button class="profile-pill" id="profile-button" title="账户">
+          <button class="profile-pill" id="profile-button" data-tooltip="账户" data-tooltip-placement="bottom" aria-label="账户">
             <span class="avatar fallback-avatar" id="profile-avatar"><svg><use href="#icon-user"></use></svg></span>
             <span id="profile-name">登录</span>
           </button>
@@ -120,23 +122,19 @@
       <div class="app-layout">
         <nav class="rail" aria-label="主导航">
           <div class="rail-main">
-            <button class="nav-button is-active" data-nav="now" title="漫游">
+            <button class="nav-button is-active" data-nav="now" data-tooltip="漫游" data-tooltip-placement="right" aria-label="漫游">
               <span class="nav-icon"><svg><use href="#icon-home"></use></svg></span>
-              <span>漫游</span>
             </button>
-            <button class="nav-button" data-nav="search" title="搜索">
+            <button class="nav-button" data-nav="search" data-tooltip="搜索" data-tooltip-placement="right" aria-label="搜索">
               <span class="nav-icon"><svg><use href="#icon-search"></use></svg></span>
-              <span>搜索</span>
             </button>
-            <button class="nav-button" data-nav="library" title="音乐库">
+            <button class="nav-button" data-nav="library" data-tooltip="音乐库" data-tooltip-placement="right" aria-label="音乐库">
               <span class="nav-icon"><svg><use href="#icon-library"></use></svg></span>
-              <span>收藏</span>
             </button>
           </div>
           <div class="rail-bottom">
-            <button class="rail-orb" id="queue-toggle" title="播放队列">
+            <button class="rail-orb" id="queue-toggle" data-tooltip="播放队列" data-tooltip-placement="right" aria-label="播放队列">
               <svg><use href="#icon-queue"></use></svg>
-              <span class="queue-count" id="queue-count">0</span>
             </button>
           </div>
         </nav>
@@ -173,7 +171,7 @@
                       <h2 id="track-name"></h2>
                       <p id="track-artist"></p>
                     </div>
-                    <button class="icon-button" id="track-more" title="更多">
+                    <button class="icon-button" id="track-more" data-tooltip="更多" aria-label="更多">
                       <svg><use href="#icon-more"></use></svg>
                     </button>
                   </div>
@@ -189,28 +187,28 @@
                 </div>
 
                 <div class="transport">
-                  <button class="transport-secondary" id="shuffle-button" title="随机播放">
+                  <button class="transport-secondary" id="shuffle-button" data-tooltip="随机播放" aria-label="随机播放">
                     <svg><use href="#icon-shuffle"></use></svg>
                   </button>
-                  <button class="transport-side" id="prev-button" title="上一首">
+                  <button class="transport-side" id="prev-button" data-tooltip="上一首" aria-label="上一首">
                     <svg><use href="#icon-prev"></use></svg>
                   </button>
-                  <button class="transport-main" id="play-button" title="播放 / 暂停">
+                  <button class="transport-main" id="play-button" data-tooltip="播放" aria-label="播放或暂停">
                     <svg><use href="#icon-play"></use></svg>
                   </button>
-                  <button class="transport-side" id="next-button" title="下一首">
+                  <button class="transport-side" id="next-button" data-tooltip="下一首" aria-label="下一首">
                     <svg><use href="#icon-next"></use></svg>
                   </button>
-                  <button class="transport-secondary" id="repeat-button" title="循环模式">
+                  <button class="transport-secondary" id="repeat-button" data-tooltip="循环模式" aria-label="循环模式">
                     <svg><use href="#icon-repeat"></use></svg>
                   </button>
                 </div>
 
                 <div class="utility-row">
-                  <button class="utility-button" id="like-button" aria-label="喜欢" title="喜欢">
+                  <button class="utility-button" id="like-button" data-tooltip="喜欢" aria-label="喜欢">
                     <svg><use href="#icon-heart"></use></svg>
                   </button>
-                  <button class="utility-button" id="equalizer-button" aria-label="均衡器" title="均衡器">
+                  <button class="utility-button" id="equalizer-button" data-tooltip="均衡器" aria-label="均衡器">
                     <svg><use href="#icon-equalizer"></use></svg>
                   </button>
                 </div>
@@ -228,7 +226,6 @@
                     <p class="lyric-placeholder"></p>
                   </div>
                 </div>
-                <div class="lyrics-fade lyrics-fade-bottom"></div>
               </section>
             </div>
           </section>
@@ -394,6 +391,7 @@
       </dialog>
 
       <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+      <div class="app-tooltip" id="app-tooltip" role="tooltip"></div>
     </div>
 
     <audio id="audio-element" preload="metadata"></audio>

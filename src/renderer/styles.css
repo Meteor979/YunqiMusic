@@ -193,32 +193,25 @@ svg {
   white-space: nowrap;
 }
 
-.brand-orbit {
-  position: relative;
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
+.brand-mark {
+  display: grid;
+  width: 25px;
+  height: 25px;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.42);
-  border-radius: 50%;
+  color: rgba(245, 246, 248, 0.96);
 }
 
-.brand-orbit::after {
-  position: absolute;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--accent-bright);
-  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.9);
-  content: "";
-  transform: translate(6px, -7px);
+.brand-mark svg {
+  width: 25px;
+  height: 25px;
 }
 
-.brand-orbit i {
-  width: 8px;
-  height: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 50%;
+.brand-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 48;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .titlebar-separator {
@@ -394,17 +387,12 @@ svg {
 
 .nav-button {
   position: relative;
-  display: flex;
-  width: 58px;
-  min-height: 57px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: 14px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
   color: var(--text-faint);
-  font-size: 10px;
-  letter-spacing: 0.05em;
   transition:
     color 220ms ease,
     background 220ms ease,
@@ -434,7 +422,7 @@ svg {
 
 .nav-icon {
   display: grid;
-  width: 28px;
+  width: 24px;
   height: 24px;
   place-items: center;
 }
@@ -475,23 +463,6 @@ svg {
 .rail-orb svg {
   width: 18px;
   height: 18px;
-}
-
-.queue-count {
-  position: absolute;
-  right: -3px;
-  bottom: -1px;
-  display: grid;
-  min-width: 17px;
-  height: 17px;
-  place-items: center;
-  padding: 0 4px;
-  border: 2px solid #0a0b0d;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #101115;
-  font-size: 8px;
-  font-weight: 800;
 }
 
 .main-content {
@@ -983,7 +954,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 35% 15px 42%;
+  padding: 27% 15px 52%;
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
   scrollbar-width: none;
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -1014,36 +987,39 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .lyric-line {
   display: block;
   width: 100%;
-  padding: 9px 0;
-  color: rgba(242, 243, 245, 0.31);
-  font-size: clamp(19px, 1.7vw, 25px);
+  padding: 7px 0;
+  color: rgba(242, 243, 245, 0.36);
+  font-size: clamp(18px, 1.55vw, 23px);
   font-weight: 560;
   letter-spacing: -0.03em;
   line-height: 1.48;
   text-align: left;
+  transform: translateX(0) scale(1);
+  transform-origin: left center;
   transition:
-    color 350ms ease,
-    filter 350ms ease,
-    opacity 350ms ease,
-    transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+    color 420ms ease,
+    filter 420ms ease,
+    opacity 420ms ease,
+    transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
   filter: blur(0.15px);
 }
 
-.lyric-line:hover {
-  color: rgba(255, 255, 255, 0.72);
+.lyric-line.is-past {
+  color: rgba(242, 243, 245, 0.2);
 }
 
-.lyric-line.is-past {
-  color: rgba(242, 243, 245, 0.16);
+.lyric-line:hover,
+.lyric-line.is-past:hover {
+  color: rgba(255, 255, 255, 0.76);
+  filter: none;
 }
 
 .lyric-line.is-active {
   color: rgba(255, 255, 255, 0.98);
-  font-size: clamp(25px, 2.3vw, 34px);
   font-weight: 650;
   line-height: 1.38;
   text-shadow: 0 4px 24px rgba(var(--accent-rgb), 0.24);
-  transform: translateX(5px);
+  transform: translateX(5px) scale(1.07);
   filter: none;
 }
 
@@ -1066,21 +1042,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   font-size: 18px;
   font-weight: 450;
   line-height: 1.8;
-}
-
-.lyrics-fade {
-  position: absolute;
-  z-index: 3;
-  right: 0;
-  left: 0;
-  height: 45px;
-  pointer-events: none;
-}
-
-.lyrics-fade-bottom {
-  bottom: 0;
-  background: linear-gradient(to top, #0a0b0e, transparent);
-  opacity: 0.7;
 }
 
 /* Shared inner pages */
@@ -2388,6 +2349,56 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   line-height: 1.6;
 }
 
+/* Tooltips */
+.app-tooltip {
+  position: fixed;
+  z-index: 160;
+  max-width: 190px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  background: rgba(31, 33, 38, 0.9);
+  box-shadow: 0 9px 28px rgba(0, 0, 0, 0.24);
+  color: rgba(242, 243, 245, 0.84);
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: blur(18px) saturate(125%);
+  transition:
+    opacity 140ms ease,
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+}
+
+.app-tooltip[data-placement="top"] {
+  transform: translate(-50%, calc(-100% - 2px)) scale(0.98);
+}
+
+.app-tooltip[data-placement="bottom"] {
+  transform: translate(-50%, -2px) scale(0.98);
+}
+
+.app-tooltip[data-placement="right"] {
+  transform: translate(-2px, -50%) scale(0.98);
+}
+
+.app-tooltip.is-visible {
+  opacity: 1;
+}
+
+.app-tooltip[data-placement="top"].is-visible {
+  transform: translate(-50%, calc(-100% - 7px)) scale(1);
+}
+
+.app-tooltip[data-placement="bottom"].is-visible {
+  transform: translate(-50%, 5px) scale(1);
+}
+
+.app-tooltip[data-placement="right"].is-visible {
+  transform: translate(4px, -50%) scale(1);
+}
+
 /* Toasts */
 .toast-stack {
   position: fixed;
@@ -2503,8 +2514,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   }
 
   .lyrics-scroll {
-    padding-top: 31%;
-    padding-bottom: 38%;
+    padding-top: 24%;
+    padding-bottom: 48%;
   }
 }
 
