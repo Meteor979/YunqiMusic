@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: https:; media-src https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; img-src 'self' data: https:; media-src https: http://*.kugou.com http://*.kgimg.com blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>云栖音乐</title>
@@ -353,10 +353,40 @@
             <span id="popover-status">登录后使用账号偏好</span>
           </div>
         </div>
-        <button class="popover-action" id="login-action">扫码登录</button>
+        <div class="platform-section">
+          <span class="platform-label">主平台</span>
+          <div class="primary-platform-switch">
+            <button data-primary-provider="netease">网易云</button>
+            <button data-primary-provider="kugou">酷狗</button>
+          </div>
+          <button class="provider-account" data-login-provider="netease">
+            <span>网易云音乐</span>
+            <small>未登录</small>
+          </button>
+          <button class="provider-account" data-login-provider="kugou">
+            <span>酷狗音乐</span>
+            <small>未登录</small>
+          </button>
+        </div>
+        <button class="popover-action" id="login-action">登录当前平台</button>
         <button class="popover-action" id="update-action">检查更新</button>
         <button class="popover-action muted" id="logout-action" hidden>退出登录</button>
       </section>
+
+      <dialog class="login-dialog" id="kugou-login-dialog">
+        <div class="dialog-glow"></div>
+        <button class="dialog-close" id="kugou-login-close">
+          <svg><use href="#icon-close-small"></use></svg>
+        </button>
+        <p class="eyebrow">KUGOU LOGIN</p>
+        <h2>酷狗音乐登录</h2>
+        <div class="qr-frame">
+          <img id="kugou-login-qr" alt="酷狗音乐登录二维码" />
+          <div class="qr-loading" id="kugou-login-loading"><span></span></div>
+        </div>
+        <p class="login-status" id="kugou-login-status">正在生成二维码</p>
+        <button class="text-button" id="kugou-login-refresh">刷新二维码</button>
+      </dialog>
 
       <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
     </div>

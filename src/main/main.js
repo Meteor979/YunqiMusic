@@ -10,6 +10,7 @@ const fs = require('fs')
 const path = require('path')
 const ncm = require('NeteaseCloudMusicApi')
 const { checkForUpdate, installUpdate } = require('./updater')
+const { createKugouAdapter } = require('./kugou')
 
 if (process.env.YUNQI_USER_DATA) {
   const userDataPath = path.resolve(process.env.YUNQI_USER_DATA)
@@ -30,7 +31,13 @@ const COOKIE_ATTRIBUTES = new Set([
 let mainWindow = null
 let webLoginTask = null
 let store = {
-  cookie: '',
+  cookies: {
+    netease: '',
+    kugou: '',
+  },
+  primaryProvider: 'netease',
+  secondaryEnabled: true,
+  kugouDevice: null,
   lastTrack: null,
   windowBounds: null,
   loudnessEnabled: true,
@@ -38,34 +45,81 @@ let store = {
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 const imageCache = new Map()
+let kugouProvider = null
 
 function statePath() {
   return path.join(app.getPath('userData'), 'yunqi-state.json')
 }
 
+function decryptStoredCookie(raw) {
+  if (typeof raw.cookie === 'string') return raw.cookie
+  if (
+    typeof raw.cookieEncrypted === 'string' &&
+    safeStorage.isEncryptionAvailable()
+  ) {
+    try {
+      return safeStorage.decryptString(
+        Buffer.from(raw.cookieEncrypted, 'base64'),
+      )
+    } catch {
+      return ''
+    }
+  }
+  return ''
+}
+
+function decryptStoredCookies(raw) {
+  if (raw.cookies && typeof raw.cookies === 'object') return raw.cookies
+  if (
+    typeof raw.cookiesEncrypted === 'string' &&
+    safeStorage.isEncryptionAvailable()
+  ) {
+    try {
+      const decoded = JSON.parse(
+        safeStorage.decryptString(
+          Buffer.from(raw.cookiesEncrypted, 'base64'),
+        ),
+      )
+      if (decoded && typeof decoded === 'object') return decoded
+    } catch {
+      // Fall back to the pre-multi-provider cookie format.
+    }
+  }
+  return null
+}
+
 function loadStore() {
   try {
     const raw = JSON.parse(fs.readFileSync(statePath(), 'utf8'))
+    const legacyCookie = decryptStoredCookie(raw)
+    const storedCookies = decryptStoredCookies(raw)
     store = {
       ...store,
       ...raw,
+      cookies: {
+        netease:
+          storedCookies?.netease ||
+          legacyCookie ||
+          '',
+        kugou: storedCookies?.kugou || '',
+      },
+      primaryProvider:
+        raw.primaryProvider === 'kugou' ? 'kugou' : 'netease',
+      secondaryEnabled: raw.secondaryEnabled !== false,
+      kugouDevice:
+        raw.kugouDevice && typeof raw.kugouDevice === 'object'
+          ? raw.kugouDevice
+          : null,
       equalizerBands:
         Array.isArray(raw.equalizerBands) && raw.equalizerBands.length === 10
           ? raw.equalizerBands.map((value) =>
               Math.max(-12, Math.min(12, Number(value) || 0)),
             )
           : store.equalizerBands,
-      cookie:
-        typeof raw.cookie === 'string'
-          ? raw.cookie
-          : typeof raw.cookieEncrypted === 'string' &&
-              safeStorage.isEncryptionAvailable()
-            ? safeStorage.decryptString(
-                Buffer.from(raw.cookieEncrypted, 'base64'),
-              )
-            : '',
     }
     delete store.cookieEncrypted
+    delete store.cookiesEncrypted
+    delete store.cookie
   } catch {
     // First launch or an unreadable settings file.
   }
@@ -78,14 +132,17 @@ function saveStore() {
     loudnessEnabled: store.loudnessEnabled,
     equalizerEnabled: store.equalizerEnabled,
     equalizerBands: store.equalizerBands,
+    primaryProvider: store.primaryProvider,
+    secondaryEnabled: store.secondaryEnabled,
+    kugouDevice: store.kugouDevice,
   }
 
-  if (store.cookie && safeStorage.isEncryptionAvailable()) {
-    payload.cookieEncrypted = safeStorage
-      .encryptString(store.cookie)
+  if (safeStorage.isEncryptionAvailable()) {
+    payload.cookiesEncrypted = safeStorage
+      .encryptString(JSON.stringify(store.cookies))
       .toString('base64')
   } else {
-    payload.cookie = store.cookie
+    payload.cookies = store.cookies
   }
 
   fs.mkdirSync(path.dirname(statePath()), { recursive: true })
@@ -119,7 +176,7 @@ async function apiCall(name, options = {}) {
 
   const response = await fn({
     ...options,
-    cookie: store.cookie,
+    cookie: store.cookies.netease,
   })
 
   if (!response || !response.body) {
@@ -135,8 +192,8 @@ async function apiCall(name, options = {}) {
   return response.body
 }
 
-async function getProfile() {
-  if (!store.cookie) return null
+async function getNeteaseProfile() {
+  if (!store.cookies.netease) return null
 
   try {
     const body = await apiCall('login_status')
@@ -154,6 +211,21 @@ async function getProfile() {
   }
 }
 
+function initializeProviderAdapters() {
+  kugouProvider = createKugouAdapter({
+    getCookie: () => store.cookies.kugou,
+    getDevice: () => store.kugouDevice,
+    setDevice: (device) => {
+      store.kugouDevice = device
+      saveStore()
+    },
+    setCookie: (cookie) => {
+      store.cookies.kugou = cookie
+      saveStore()
+    },
+  })
+}
+
 function normalizeArtwork(url) {
   if (!url) return ''
   return String(url)
@@ -161,13 +233,17 @@ function normalizeArtwork(url) {
     .replace(/\?.*$/, '?param=900y900')
 }
 
-function normalizeSong(raw) {
+function normalizeNeteaseSong(raw) {
   const song = raw?.song || raw?.track || raw || {}
   const album = song.album || song.al || raw?.album || {}
   const artists = song.artists || song.ar || raw?.artists || []
+  const providerId = String(song.id || raw?.id || '')
 
   return {
-    id: Number(song.id || raw?.id),
+    id: `netease:${providerId}`,
+    provider: 'netease',
+    providerId,
+    providerData: { id: providerId },
     name: song.name || raw?.name || '未知歌曲',
     artists: artists.map((artist) => artist.name).filter(Boolean),
     artistIds: artists.map((artist) => artist.id).filter(Boolean),
@@ -182,10 +258,14 @@ function normalizeSong(raw) {
   }
 }
 
-function normalizePlaylist(raw) {
+function normalizeNeteasePlaylist(raw) {
   if (!raw) return null
+  const providerId = String(raw.id)
   return {
-    id: Number(raw.id),
+    id: `netease:${providerId}`,
+    provider: 'netease',
+    providerId,
+    providerData: { id: providerId },
     name: raw.name || '未命名歌单',
     cover: normalizeArtwork(raw.coverImgUrl || raw.picUrl),
     description: raw.description || '',
@@ -193,27 +273,29 @@ function normalizePlaylist(raw) {
     creator: raw.creator?.nickname || raw.creator?.name || '',
     playCount: Number(raw.playCount || 0),
     tracks: Array.isArray(raw.tracks)
-      ? raw.tracks.map(normalizeSong).filter((song) => song.id)
+      ? raw.tracks.map(normalizeNeteaseSong).filter((song) => song.id)
       : [],
   }
 }
 
 async function getDailySongs() {
-  if (store.cookie) {
+  if (store.cookies.netease) {
     try {
       const body = await apiCall('recommend_songs')
       const songs = body.data?.dailySongs || body.recommend || []
-      if (songs.length) return songs.map(normalizeSong)
+      if (songs.length) return songs.map(normalizeNeteaseSong)
     } catch {
       // Fall back to public recommendations.
     }
   }
 
   const body = await apiCall('personalized_newsong', { limit: 30 })
-  return (body.result || []).map(normalizeSong).filter((song) => song.id)
+  return (body.result || [])
+    .map(normalizeNeteaseSong)
+    .filter((song) => song.id)
 }
 
-async function getRoamSongs(limit = 8) {
+async function getNeteaseRoamSongs(limit = 8) {
   const requestCount = Math.max(4, Math.min(16, limit * 2))
   const responses = await Promise.allSettled(
     Array.from({ length: requestCount }, () => apiCall('personal_fm')),
@@ -224,7 +306,7 @@ async function getRoamSongs(limit = 8) {
   for (const response of responses) {
     if (response.status !== 'fulfilled') continue
     for (const item of response.value.data || []) {
-      const track = normalizeSong(item)
+      const track = normalizeNeteaseSong(item)
       if (!track.id || seen.has(track.id)) continue
       seen.add(track.id)
       tracks.push(track)
@@ -237,7 +319,15 @@ async function getRoamSongs(limit = 8) {
 }
 
 async function getLibrary() {
-  const profile = await getProfile()
+  if (store.primaryProvider === 'kugou') {
+    const library = await kugouProvider.getLibrary()
+    return {
+      ...library,
+      provider: 'kugou',
+    }
+  }
+
+  const profile = await getNeteaseProfile()
   let playlists = []
   let recent = []
 
@@ -247,7 +337,7 @@ async function getLibrary() {
         uid: profile.id,
         limit: 50,
       })
-      playlists = (body.playlist || []).map(normalizePlaylist)
+      playlists = (body.playlist || []).map(normalizeNeteasePlaylist)
     } catch {
       playlists = []
     }
@@ -259,7 +349,7 @@ async function getLibrary() {
       })
       recent = (body.allData || [])
         .slice(0, 16)
-        .map((entry) => normalizeSong(entry.song || entry.data))
+        .map((entry) => normalizeNeteaseSong(entry.song || entry.data))
         .filter((song) => song.id)
     } catch {
       recent = []
@@ -268,20 +358,143 @@ async function getLibrary() {
 
   return {
     profile,
+    provider: 'netease',
     playlists,
     recent,
     daily: await getDailySongs().catch(() => []),
   }
 }
 
+async function getNeteaseSongUrl(track) {
+  const levels = ['jymaster', 'hires', 'lossless', 'exhigh', 'standard']
+  let trialFallback = null
+
+  for (const level of levels) {
+    let item
+    try {
+      const body = await apiCall('song_url_v1', {
+        id: Number(track.providerId),
+        level,
+      })
+      item = body.data?.[0]
+    } catch {
+      continue
+    }
+    if (!item?.url) continue
+
+    const result = {
+      url: String(item.url).replace(/^http:\/\//i, 'https://'),
+      type: item.type || 'mp3',
+      bitrate: Number(item.br || 0),
+      size: Number(item.size || 0),
+      level: item.level || level,
+      gain: Number(item.gain || 0),
+      peak: Number(item.peak || 0),
+      closedGain: Number(item.closedGain || 0),
+      limited: Boolean(item.freeTrialInfo),
+      trial: item.freeTrialInfo || null,
+      sourceProvider: 'netease',
+    }
+    if (!result.limited) return result
+    trialFallback ||= result
+  }
+
+  return (
+    trialFallback || {
+      url: '',
+      limited: true,
+      sourceProvider: 'netease',
+      reason: '当前账号没有这首歌的可用音源',
+    }
+  )
+}
+
+async function searchProvider(provider, keywords) {
+  if (provider === 'kugou') return kugouProvider.search(keywords)
+  const body = await apiCall('search', {
+    keywords,
+    type: 1,
+    limit: 40,
+  })
+  return (body.result?.songs || [])
+    .map(normalizeNeteaseSong)
+    .filter((song) => song.id)
+}
+
+function normalizedMatchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)|（[^）]*）|\[[^\]]*\]/g, '')
+    .replace(/[\s\-_.·,，/]/g, '')
+}
+
+async function findFallbackTrack(track, provider) {
+  const keywords = `${track.name} ${track.artists?.[0] || ''}`.trim()
+  const candidates = await searchProvider(provider, keywords).catch(() => [])
+  const title = normalizedMatchText(track.name)
+  const artist = normalizedMatchText(track.artists?.[0])
+  return (
+    candidates.find((candidate) => {
+      const candidateTitle = normalizedMatchText(candidate.name)
+      const candidateArtist = normalizedMatchText(candidate.artists?.[0])
+      return (
+        candidateTitle === title &&
+        (!artist || candidateArtist.includes(artist) || artist.includes(candidateArtist))
+      )
+    }) || null
+  )
+}
+
+async function getProviderSongUrl(track) {
+  const direct =
+    track.provider === 'kugou'
+      ? await kugouProvider.songUrl(track)
+      : await getNeteaseSongUrl(track)
+  if (direct?.url && !direct.limited) return direct
+
+  if (
+    store.secondaryEnabled &&
+    track.provider === store.primaryProvider
+  ) {
+    const secondary = store.primaryProvider === 'netease' ? 'kugou' : 'netease'
+    const fallbackTrack = await findFallbackTrack(track, secondary)
+    if (fallbackTrack) {
+      const fallback =
+        secondary === 'kugou'
+          ? await kugouProvider.songUrl(fallbackTrack)
+          : await getNeteaseSongUrl(fallbackTrack)
+      if (fallback?.url) {
+        return { ...fallback, fallbackUsed: true }
+      }
+    }
+  }
+
+  return direct
+}
+
+async function getProviderProfiles() {
+  const [netease, kugou] = await Promise.all([
+    getNeteaseProfile().catch(() => null),
+    kugouProvider.getProfile().catch(() => null),
+  ])
+  return { netease, kugou }
+}
+
 function registerIpc() {
   ipcMain.handle('app:bootstrap', async () => {
-    const [profile, roam] = await Promise.all([
-      getProfile(),
-      getRoamSongs(8).catch(() => []),
+    const [profiles, roam] = await Promise.all([
+      getProviderProfiles(),
+      (
+        store.primaryProvider === 'kugou'
+          ? kugouProvider.roam(8)
+          : getNeteaseRoamSongs(8)
+      ).catch(() => []),
     ])
     return {
-      profile,
+      profile: profiles[store.primaryProvider],
+      profiles,
+      primaryProvider: store.primaryProvider,
+      secondaryEnabled: store.secondaryEnabled,
       roam,
       audio: {
         loudnessEnabled: store.loudnessEnabled,
@@ -294,7 +507,11 @@ function registerIpc() {
   ipcMain.handle('music:daily', async () => getDailySongs())
   ipcMain.handle('music:roam', async (_event, limit) => {
     const count = Math.max(1, Math.min(12, Number(limit) || 8))
-    return getRoamSongs(count)
+    return (
+      store.primaryProvider === 'kugou'
+        ? kugouProvider.roam(count)
+        : getNeteaseRoamSongs(count)
+    )
   })
   ipcMain.handle('music:library', async () => getLibrary())
 
@@ -302,92 +519,77 @@ function registerIpc() {
     const keywords = String(query || '').trim().slice(0, 80)
     if (!keywords) return { songs: [], playlists: [] }
 
-    const [songBody, playlistBody] = await Promise.all([
-      apiCall('search', { keywords, type: 1, limit: 40 }),
-      apiCall('search', { keywords, type: 1000, limit: 12 }).catch(() => ({
-        result: {},
-      })),
+    const secondary =
+      store.primaryProvider === 'netease' ? 'kugou' : 'netease'
+    const [primarySongs, secondarySongs, playlistBody] = await Promise.all([
+      searchProvider(store.primaryProvider, keywords).catch(() => []),
+      store.secondaryEnabled
+        ? searchProvider(secondary, keywords).catch(() => [])
+        : Promise.resolve([]),
+      (
+        store.primaryProvider === 'kugou'
+          ? kugouProvider.searchPlaylists(keywords)
+          : apiCall('search', {
+              keywords,
+              type: 1000,
+              limit: 12,
+            }).then((body) =>
+              (body.result?.playlists || []).map(normalizeNeteasePlaylist),
+            )
+      ).catch(() => []),
     ])
 
     return {
-      songs: (songBody.result?.songs || [])
-        .map(normalizeSong)
-        .filter((song) => song.id),
-      playlists: (playlistBody.result?.playlists || []).map(normalizePlaylist),
+      songs: [...primarySongs, ...secondarySongs],
+      playlists: (playlistBody || []).filter(Boolean),
     }
   })
 
-  ipcMain.handle('music:playlist', async (_event, id) => {
-    const playlistId = Number(id)
-    if (!Number.isSafeInteger(playlistId) || playlistId <= 0) {
+  ipcMain.handle('music:playlist', async (_event, unifiedId) => {
+    const [provider, ...idParts] = String(unifiedId || '').split(':')
+    const playlistId = idParts.join(':')
+    if (!['netease', 'kugou'].includes(provider) || !playlistId) {
       throw new Error('歌单编号无效')
     }
 
-    const body = await apiCall('playlist_detail', { id: playlistId })
-    const playlist = normalizePlaylist(body.playlist)
+    if (provider === 'kugou') {
+      const playlist = await kugouProvider.getPlaylist(playlistId)
+      if (!playlist) throw new Error('没有找到这个歌单')
+      return playlist
+    }
+
+    const body = await apiCall('playlist_detail', { id: Number(playlistId) })
+    const playlist = normalizeNeteasePlaylist(body.playlist)
     if (!playlist) throw new Error('没有找到这个歌单')
 
     if (!playlist.tracks.length) {
       const tracksBody = await apiCall('playlist_track_all', {
-        id: playlistId,
+        id: Number(playlistId),
         limit: 1000,
       })
       playlist.tracks = (tracksBody.songs || [])
-        .map(normalizeSong)
+        .map(normalizeNeteaseSong)
         .filter((song) => song.id)
     }
 
     return playlist
   })
 
-  ipcMain.handle('music:url', async (_event, id) => {
-    const songId = Number(id)
-    if (!Number.isSafeInteger(songId) || songId <= 0) {
+  ipcMain.handle('music:url', async (_event, track) => {
+    if (!track?.provider || !track?.providerId) {
       throw new Error('歌曲编号无效')
     }
-
-    const levels = ['jymaster', 'hires', 'lossless', 'exhigh', 'standard']
-    let trialFallback = null
-
-    for (const level of levels) {
-      let item
-      try {
-        const body = await apiCall('song_url_v1', { id: songId, level })
-        item = body.data?.[0]
-      } catch {
-        continue
-      }
-
-      if (!item?.url) continue
-
-      const result = {
-        url: String(item.url).replace(/^http:\/\//i, 'https://'),
-        type: item.type || 'mp3',
-        bitrate: Number(item.br || 0),
-        size: Number(item.size || 0),
-        level: item.level || level,
-        gain: Number(item.gain || 0),
-        peak: Number(item.peak || 0),
-        closedGain: Number(item.closedGain || 0),
-        limited: Boolean(item.freeTrialInfo),
-        trial: item.freeTrialInfo || null,
-      }
-
-      if (!result.limited) return result
-      trialFallback ||= result
-    }
-
-    return (
-      trialFallback || {
-        url: '',
-        limited: true,
-        reason: '当前账号没有这首歌的可用音源',
-      }
-    )
+    return getProviderSongUrl(track)
   })
 
-  ipcMain.handle('music:lyric', async (_event, id) => {
-    const body = await apiCall('lyric', { id: Number(id) })
+  ipcMain.handle('music:lyric', async (_event, track) => {
+    if (!track?.provider || !track?.providerId) {
+      return { lrc: '', translated: '', romaji: '' }
+    }
+    if (track.provider === 'kugou') {
+      return kugouProvider.getLyric(track)
+    }
+    const body = await apiCall('lyric', { id: Number(track.providerId) })
     return {
       lrc: body.lrc?.lyric || '',
       translated: body.tlyric?.lyric || '',
@@ -395,10 +597,15 @@ function registerIpc() {
     }
   })
 
-  ipcMain.handle('music:like-state', async (_event, id) => {
-    if (!store.cookie) return { liked: false, loggedIn: false }
+  ipcMain.handle('music:like-state', async (_event, track) => {
+    if (track.provider === 'kugou') {
+      return kugouProvider.getLikeState(track)
+    }
+    if (!store.cookies.netease) return { liked: false, loggedIn: false }
     try {
-      const body = await apiCall('song_like_check', { ids: String(Number(id)) })
+      const body = await apiCall('song_like_check', {
+        ids: String(Number(track.providerId)),
+      })
       return {
         liked: Boolean(body.data ?? body.liked ?? false),
         loggedIn: true,
@@ -408,23 +615,30 @@ function registerIpc() {
     }
   })
 
-  ipcMain.handle('music:like', async (_event, id, liked) => {
-    if (!store.cookie) throw new Error('登录后才能收藏歌曲')
+  ipcMain.handle('music:like', async (_event, track, liked) => {
+    if (track.provider === 'kugou') {
+      return kugouProvider.setLike(track, Boolean(liked))
+    }
+    if (!store.cookies.netease) throw new Error('登录后才能收藏歌曲')
     const body = await apiCall('like', {
-      id: Number(id),
+      id: Number(track.providerId),
       like: Boolean(liked),
     })
     if (body.code !== 200) throw new Error(body.message || '收藏失败')
     return { liked: Boolean(liked) }
   })
 
-  ipcMain.handle('auth:logout', async () => {
-    try {
-      await apiCall('logout')
-    } catch {
-      // Clearing local state is still useful if the remote request fails.
+  ipcMain.handle('auth:logout', async (_event, provider = store.primaryProvider) => {
+    if (provider === 'netease') {
+      try {
+        await apiCall('logout')
+      } catch {
+        // Clearing local state is still useful if the remote request fails.
+      }
+      store.cookies.netease = ''
+    } else if (provider === 'kugou') {
+      store.cookies.kugou = ''
     }
-    store.cookie = ''
     saveStore()
     return { ok: true }
   })
@@ -501,10 +715,10 @@ function registerIpc() {
           )
           if (!cookie) return
 
-          store.cookie = cookie
-          const profile = await getProfile()
+          store.cookies.netease = cookie
+          const profile = await getNeteaseProfile()
           if (!profile) {
-            store.cookie = ''
+            store.cookies.netease = ''
             return
           }
 
@@ -549,9 +763,37 @@ function registerIpc() {
     return webLoginTask
   })
 
+  ipcMain.handle('platforms:set-primary', async (_event, provider) => {
+    if (!['netease', 'kugou'].includes(provider)) {
+      throw new Error('不支持的音乐平台')
+    }
+    store.primaryProvider = provider
+    saveStore()
+    return {
+      primaryProvider: store.primaryProvider,
+      profiles: await getProviderProfiles(),
+    }
+  })
+
+  ipcMain.handle('platforms:set-secondary-enabled', (_event, enabled) => {
+    store.secondaryEnabled = Boolean(enabled)
+    saveStore()
+    return { secondaryEnabled: store.secondaryEnabled }
+  })
+
+  ipcMain.handle('auth:kugou-qr-start', async () => {
+    if (!kugouProvider) initializeProviderAdapters()
+    return kugouProvider.startQrLogin()
+  })
+
+  ipcMain.handle('auth:kugou-qr-check', async () => {
+    if (!kugouProvider) initializeProviderAdapters()
+    return kugouProvider.checkQrLogin()
+  })
+
   ipcMain.handle('app:remember-track', (_event, track) => {
-    if (!track || !Number.isSafeInteger(Number(track.id))) return
-    store.lastTrack = { ...track, id: Number(track.id) }
+    if (!track?.id || !track?.provider || !track?.providerId) return
+    store.lastTrack = { ...track }
     saveStore()
   })
 
@@ -598,7 +840,10 @@ function registerIpc() {
     if (
       parsed.protocol !== 'https:' ||
       !(parsed.hostname === 'music.126.net' ||
-        parsed.hostname.endsWith('.music.126.net'))
+        parsed.hostname.endsWith('.music.126.net') ||
+        parsed.hostname === 'kugou.com' ||
+        parsed.hostname.endsWith('.kugou.com') ||
+        parsed.hostname.endsWith('.kgimg.com'))
     ) {
       return ''
     }
@@ -736,6 +981,7 @@ function createWindow() {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.yunqi.music')
   loadStore()
+  initializeProviderAdapters()
   registerIpc()
   createWindow()
 

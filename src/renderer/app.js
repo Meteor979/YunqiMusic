@@ -7,6 +7,12 @@ const $$ = (selector) => [...document.querySelectorAll(selector)]
 
 const state = {
   profile: null,
+  profiles: {
+    netease: null,
+    kugou: null,
+  },
+  primaryProvider: 'netease',
+  secondaryEnabled: true,
   daily: [],
   recent: [],
   playlists: [],
@@ -28,12 +34,16 @@ const state = {
   equalizerEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   trackLoudnessDb: 0,
+  playbackUrls: [],
+  playbackUrlIndex: 0,
   loadToken: 0,
   searchToken: 0,
   artToken: 0,
   urlCache: new Map(),
   updateInfo: null,
   checkingUpdate: false,
+  kugouQrTimer: null,
+  kugouQrBusy: false,
 }
 
 const el = {
@@ -68,6 +78,10 @@ const el = {
   loginAction: $('#login-action'),
   updateAction: $('#update-action'),
   logoutAction: $('#logout-action'),
+  kugouLoginDialog: $('#kugou-login-dialog'),
+  kugouLoginQr: $('#kugou-login-qr'),
+  kugouLoginLoading: $('#kugou-login-loading'),
+  kugouLoginStatus: $('#kugou-login-status'),
   searchInput: $('#search-input'),
   searchResults: $('#search-results'),
   libraryContent: $('#library-content'),
@@ -91,6 +105,11 @@ const icons = {
   mute: '<svg aria-hidden="true"><use href="#icon-mute"></use></svg>',
   heart: '<svg aria-hidden="true"><use href="#icon-heart"></use></svg>',
   user: '<svg aria-hidden="true"><use href="#icon-user"></use></svg>',
+}
+
+const PROVIDER_LABELS = {
+  netease: '网易云',
+  kugou: '酷狗',
 }
 
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -140,6 +159,10 @@ function formatCount(value) {
   return number ? number.toLocaleString('zh-CN') : ''
 }
 
+function providerBadge(provider) {
+  return `<i class="provider-badge">${PROVIDER_LABELS[provider] || '音乐'}</i>`
+}
+
 function formatQuality(result) {
   const levelNames = {
     jymaster: '超清母带',
@@ -157,7 +180,10 @@ function formatQuality(result) {
       : `${Math.round(result.bitrate / 1000)} kbps`
     : ''
 
-  return [level, type, bitrate].filter(Boolean).join(' · ')
+  const source = result.sourceProvider
+    ? `${PROVIDER_LABELS[result.sourceProvider]}${result.fallbackUsed ? '补源' : ''}`
+    : ''
+  return [source, level, type, bitrate].filter(Boolean).join(' · ')
 }
 
 function friendlyError(error) {
@@ -453,10 +479,10 @@ function renderLyrics(lyrics) {
     .join('')
 }
 
-async function loadLyrics(trackId, token) {
+async function loadLyrics(track, token) {
   resetLyrics('')
   try {
-    const lyric = await api.getLyric(trackId)
+    const lyric = await api.getLyric(track)
     if (token !== state.loadToken) return
     renderLyrics(mergeLyrics(lyric.lrc, lyric.translated))
   } catch {
@@ -602,11 +628,11 @@ async function updatePalette(cover) {
   }
 }
 
-async function updateLikeState(trackId, token) {
+async function updateLikeState(track, token) {
   state.liked = false
   el.likeButton.classList.remove('is-active')
   try {
-    const result = await api.getLikeState(trackId)
+    const result = await api.getLikeState(track)
     if (token !== state.loadToken) return
     state.liked = Boolean(result.liked)
   } catch {
@@ -619,8 +645,8 @@ async function prepareTrack(track, { play = false } = {}) {
   const token = ++state.loadToken
   updateTrackUI(track)
   updatePalette(track.cover)
-  loadLyrics(track.id, token)
-  updateLikeState(track.id, token)
+  loadLyrics(track, token)
+  updateLikeState(track, token)
   api.rememberTrack(track).catch(() => {})
 
   if (play) await startPlayback(track, token)
@@ -630,7 +656,7 @@ async function resolveSongUrl(track) {
   const cached = state.urlCache.get(track.id)
   if (cached && cached.expiresAt > Date.now()) return cached.value
 
-  const value = await api.getSongUrl(track.id)
+  const value = await api.getSongUrl(track)
   if (value?.url) {
     state.urlCache.set(track.id, {
       value,
@@ -662,6 +688,10 @@ async function startPlayback(track = state.track, token = state.loadToken) {
     await ensureAudioGraph()
     audio.dataset.trackId = String(track.id)
     state.trackLoudnessDb = Number(result.gain || 0)
+    state.playbackUrls = result.urls?.length
+      ? result.urls
+      : [result.url]
+    state.playbackUrlIndex = 0
     applyLoudnessNormalization()
     audio.src = result.url
     el.quality.textContent = formatQuality(result)
@@ -824,6 +854,7 @@ function updateProgress() {
 }
 
 function updateProfileUI() {
+  state.profile = state.profiles[state.primaryProvider] || null
   const profile = state.profile
   const avatar = safeArtwork(profile?.avatar)
 
@@ -831,11 +862,28 @@ function updateProfileUI() {
   el.popoverName.textContent = profile ? profile.name : '游客'
   el.popoverStatus.textContent = profile
     ? profile.vip
-      ? '黑胶会员'
-      : '已同步网易云音乐'
-    : '登录后使用账号偏好'
-  el.loginAction.textContent = profile ? '重新扫码登录' : '扫码登录'
+      ? `${PROVIDER_LABELS[state.primaryProvider]}会员`
+      : `主平台 · ${PROVIDER_LABELS[state.primaryProvider]}`
+    : `主平台 · ${PROVIDER_LABELS[state.primaryProvider]}`
+  el.loginAction.textContent = profile
+    ? `重新登录${PROVIDER_LABELS[state.primaryProvider]}`
+    : `登录${PROVIDER_LABELS[state.primaryProvider]}`
   el.logoutAction.hidden = !profile
+
+  $$('[data-primary-provider]').forEach((button) => {
+    button.classList.toggle(
+      'is-active',
+      button.dataset.primaryProvider === state.primaryProvider,
+    )
+  })
+
+  for (const provider of ['netease', 'kugou']) {
+    const account = state.profiles[provider]
+    const button = $(`[data-login-provider="${provider}"]`)
+    const status = button?.querySelector('small')
+    button?.classList.toggle('is-logged-in', Boolean(account))
+    if (status) status.textContent = account ? account.name : '未登录'
+  }
 
   for (const avatarElement of [el.profileAvatar, el.popoverAvatar]) {
     avatarElement.innerHTML = avatar
@@ -852,7 +900,8 @@ async function refreshLibrary(showLoading = true) {
 
   try {
     const library = await api.getLibrary()
-    state.profile = library.profile || state.profile
+    state.profiles[state.primaryProvider] =
+      library.profile || state.profiles[state.primaryProvider]
     state.daily = library.daily || []
     state.recent = library.recent || []
     state.playlists = library.playlists || []
@@ -875,7 +924,7 @@ function renderMiniTracks(tracks, listKey) {
           ${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : '<span class="song-thumb"></span>'}
           <div>
             <strong>${escapeHTML(track.name)}</strong>
-            <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span>
+            <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
           </div>
         </button>
       `,
@@ -899,7 +948,7 @@ function playlistCards(playlists) {
                 <span class="card-play">${icons.play}</span>
               </div>
               <h3>${escapeHTML(playlist.name)}</h3>
-              <p>${escapeHTML(playlist.creator || formatCount(playlist.playCount) || `${playlist.trackCount} 首`)}</p>
+              <p>${escapeHTML(playlist.creator || formatCount(playlist.playCount) || `${playlist.trackCount} 首`)} ${providerBadge(playlist.provider)}</p>
             </article>
           `,
         )
@@ -957,7 +1006,9 @@ function renderLibrary() {
     ${playlistSection}
   `
 
-  $('#login-inline-button')?.addEventListener('click', openLoginDialog)
+  $('#login-inline-button')?.addEventListener('click', () =>
+    loginProvider(state.primaryProvider),
+  )
 }
 
 function renderSongTable(songs, listKey, limit = 40) {
@@ -977,7 +1028,7 @@ function renderSongTable(songs, listKey, limit = 40) {
                 <span class="song-thumb">${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : ''}</span>
                 <span class="song-copy">
                   <strong>${escapeHTML(track.name)}</strong>
-                  <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span>
+                  <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
                 </span>
               </span>
               <span class="song-album-cell">${escapeHTML(track.album || '')}</span>
@@ -1018,7 +1069,6 @@ async function performSearch(query) {
             <section class="result-section">
               <div class="section-heading">
                 <h2>相关歌单</h2>
-                <span class="section-count">顺着情绪继续找</span>
               </div>
               ${playlistCards(result.playlists)}
             </section>
@@ -1077,7 +1127,7 @@ function renderPlaylist(playlist) {
         ${playlist.cover ? `<img src="${escapeHTML(playlist.cover)}" alt="" />` : ''}
       </div>
       <div class="playlist-meta">
-        <p class="eyebrow">PLAYLIST</p>
+        <p class="eyebrow">${PROVIDER_LABELS[playlist.provider] || 'PLAYLIST'} PLAYLIST</p>
         <h1>${escapeHTML(playlist.name)}</h1>
         ${playlist.description ? `<p class="playlist-description">${escapeHTML(playlist.description)}</p>` : ''}
         <div class="playlist-facts">
@@ -1105,7 +1155,7 @@ function queueItem(track, index) {
       ${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : '<span class="song-thumb"></span>'}
       <span class="queue-copy">
         <strong>${escapeHTML(track.name)}</strong>
-        <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span>
+        <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
       </span>
       <span class="queue-time">${formatTime(track.duration / 1000)}</span>
     </button>
@@ -1190,8 +1240,79 @@ async function handleUpdateAction() {
   }
 }
 
-async function openLoginDialog() {
+function closeKugouQrTimer() {
+  if (state.kugouQrTimer) {
+    window.clearTimeout(state.kugouQrTimer)
+    state.kugouQrTimer = null
+  }
+  state.kugouQrBusy = false
+}
+
+function closeKugouLoginDialog() {
+  closeKugouQrTimer()
+  if (el.kugouLoginDialog.open) el.kugouLoginDialog.close()
+}
+
+async function startKugouQrLogin() {
+  closeKugouQrTimer()
+  el.kugouLoginQr.removeAttribute('src')
+  el.kugouLoginLoading.hidden = false
+  el.kugouLoginStatus.textContent = '正在生成二维码'
+
+  try {
+    const result = await api.startKugouQrLogin()
+    el.kugouLoginQr.src = result.image
+    el.kugouLoginLoading.hidden = true
+    el.kugouLoginStatus.textContent = '等待扫码'
+
+    const poll = async () => {
+      if (!el.kugouLoginDialog.open || state.kugouQrBusy) return
+      state.kugouQrBusy = true
+      try {
+        const status = await api.checkKugouQrLogin()
+        if (status.code === 4) {
+          state.profiles.kugou = status.profile
+          updateProfileUI()
+          closeKugouLoginDialog()
+          showToast(`已登录酷狗音乐：${status.profile?.name || ''}`)
+          if (state.primaryProvider === 'kugou') {
+            refreshLibrary(false)
+            loadRoamQueue({ preservePlaying: true }).catch(() => {})
+          }
+          return
+        }
+        el.kugouLoginStatus.textContent =
+          status.message || '等待扫码'
+        if (status.code === 0) return
+        state.kugouQrTimer = window.setTimeout(poll, 1500)
+      } catch (error) {
+        el.kugouLoginStatus.textContent = friendlyError(error)
+        if (el.kugouLoginDialog.open) {
+          state.kugouQrTimer = window.setTimeout(poll, 2500)
+        }
+      } finally {
+        state.kugouQrBusy = false
+      }
+    }
+    state.kugouQrTimer = window.setTimeout(poll, 1200)
+  } catch (error) {
+    el.kugouLoginLoading.hidden = true
+    el.kugouLoginStatus.textContent = friendlyError(error)
+  }
+}
+
+async function openKugouLoginDialog() {
+  if (!el.kugouLoginDialog.open) el.kugouLoginDialog.showModal()
+  await startKugouQrLogin()
+}
+
+async function loginProvider(provider = state.primaryProvider) {
   setProfileOpen(false)
+  if (provider === 'kugou') {
+    await openKugouLoginDialog()
+    return
+  }
+
   showToast('已打开网易云官方登录窗口，请在窗口中扫码')
 
   try {
@@ -1201,23 +1322,41 @@ async function openLoginDialog() {
       return
     }
 
-    state.profile = result.profile
+    state.profiles.netease = result.profile
     updateProfileUI()
-    showToast(`欢迎回来，${state.profile?.name || '音乐朋友'}`)
-    refreshLibrary(false)
-    loadRoamQueue({ preservePlaying: true }).catch((error) => {
-      showToast(friendlyError(error))
-    })
+    showToast(`已登录网易云音乐：${result.profile?.name || ''}`)
+    if (state.primaryProvider === 'netease') {
+      refreshLibrary(false)
+      loadRoamQueue({ preservePlaying: true }).catch((error) => {
+        showToast(friendlyError(error))
+      })
+    }
   } catch (error) {
     showToast(`登录失败：${friendlyError(error)}`, 4200)
   }
 }
 
+async function setPrimaryProvider(provider) {
+  if (!PROVIDER_LABELS[provider] || provider === state.primaryProvider) return
+  try {
+    const result = await api.setPrimaryProvider(provider)
+    state.primaryProvider = result.primaryProvider
+    state.profiles = result.profiles
+    updateProfileUI()
+    await Promise.all([
+      refreshLibrary(false),
+      loadRoamQueue({ preservePlaying: true }),
+    ])
+  } catch (error) {
+    showToast(friendlyError(error), 4200)
+  }
+}
+
 async function toggleLike() {
   if (!state.track) return
-  if (!state.profile) {
+  if (!state.profiles[state.track.provider]) {
     showToast('登录后才能把歌曲留在这里')
-    openLoginDialog()
+    loginProvider(state.track.provider)
     return
   }
 
@@ -1226,7 +1365,7 @@ async function toggleLike() {
   el.likeButton.classList.toggle('is-active', state.liked)
 
   try {
-    await api.setLike(state.track.id, state.liked)
+    await api.setLike(state.track, state.liked)
     showToast(state.liked ? '已经放进了喜欢的音乐' : '已从喜欢的音乐中移除')
   } catch (error) {
     state.liked = previous
@@ -1307,6 +1446,13 @@ function bindEvents() {
   audio.addEventListener('ended', () => nextTrack({ automatic: true }))
   audio.addEventListener('error', () => {
     if (!audio.src) return
+    const nextUrl = state.playbackUrls[state.playbackUrlIndex + 1]
+    if (nextUrl) {
+      state.playbackUrlIndex += 1
+      audio.src = nextUrl
+      audio.play().catch(() => {})
+      return
+    }
     showToast('音频加载中断，请检查网络或尝试下一首')
   })
 
@@ -1363,23 +1509,38 @@ function bindEvents() {
   $('#equalizer-reset').addEventListener('click', () =>
     setEqualizerPreset('flat'),
   )
+  $('#kugou-login-close').addEventListener('click', closeKugouLoginDialog)
+  $('#kugou-login-refresh').addEventListener('click', startKugouQrLogin)
+  el.kugouLoginDialog.addEventListener('close', closeKugouQrTimer)
+  el.kugouLoginDialog.addEventListener('cancel', closeKugouQrTimer)
 
   el.profileButton.addEventListener('click', (event) => {
     event.stopPropagation()
     setProfileOpen(!el.popover.classList.contains('is-open'))
   })
   el.popoverBackdrop.addEventListener('click', () => setProfileOpen(false))
-  el.loginAction.addEventListener('click', openLoginDialog)
+  el.loginAction.addEventListener('click', () => loginProvider())
+  $$('[data-login-provider]').forEach((button) => {
+    button.addEventListener('click', () =>
+      loginProvider(button.dataset.loginProvider),
+    )
+  })
+  $$('[data-primary-provider]').forEach((button) => {
+    button.addEventListener('click', () =>
+      setPrimaryProvider(button.dataset.primaryProvider),
+    )
+  })
   el.updateAction.addEventListener('click', handleUpdateAction)
   el.logoutAction.addEventListener('click', async () => {
     try {
-      await api.logout()
-      state.profile = null
+      const provider = state.primaryProvider
+      await api.logout(provider)
+      state.profiles[provider] = null
       state.recent = []
       state.playlists = []
       updateProfileUI()
       setProfileOpen(false)
-      showToast('已经退出登录')
+      showToast(`已退出${PROVIDER_LABELS[provider]}账号`)
       refreshLibrary(false)
       loadRoamQueue({ preservePlaying: true }).catch(() => {})
     } catch (error) {
@@ -1402,19 +1563,21 @@ function bindEvents() {
     const trackElement = event.target.closest('[data-track-id][data-list-key]')
     if (trackElement) {
       const list = state.sources[trackElement.dataset.listKey] || []
-      const track = list.find((item) => item.id === Number(trackElement.dataset.trackId))
+      const track = list.find(
+        (item) => item.id === String(trackElement.dataset.trackId),
+      )
       if (track) playTrackFromList(track, trackElement.dataset.listKey)
       return
     }
 
     const playlistElement = event.target.closest('[data-playlist-id]')
-    if (playlistElement) openPlaylist(Number(playlistElement.dataset.playlistId))
+    if (playlistElement) openPlaylist(String(playlistElement.dataset.playlistId))
   })
   $('.main-content').addEventListener('keydown', (event) => {
     const playlistElement = event.target.closest('[data-playlist-id]')
     if (playlistElement && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault()
-      openPlaylist(Number(playlistElement.dataset.playlistId))
+      openPlaylist(String(playlistElement.dataset.playlistId))
     }
   })
 
@@ -1429,6 +1592,7 @@ function bindEvents() {
       setQueueOpen(false)
       setEqualizerOpen(false)
       setProfileOpen(false)
+      closeKugouLoginDialog()
       return
     }
     if (typing) return
@@ -1460,7 +1624,14 @@ async function initialize() {
 
   try {
     const bootstrap = await api.bootstrap()
-    state.profile = bootstrap.profile
+    state.profiles = {
+      netease: null,
+      kugou: null,
+      ...(bootstrap.profiles || {}),
+    }
+    state.primaryProvider = bootstrap.primaryProvider || 'netease'
+    state.secondaryEnabled = bootstrap.secondaryEnabled !== false
+    state.profile = state.profiles[state.primaryProvider] || null
     state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
     state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
     if (

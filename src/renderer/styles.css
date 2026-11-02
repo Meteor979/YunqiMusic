@@ -2085,7 +2085,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   top: 46px;
   right: 144px;
   display: flex;
-  width: 245px;
+  width: 278px;
   flex-direction: column;
   gap: 7px;
   padding: 12px;
@@ -2153,6 +2153,85 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .popover-action.muted {
   background: transparent;
   color: var(--text-soft);
+}
+
+.platform-section {
+  display: grid;
+  gap: 7px;
+  padding: 9px 0 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.platform-label {
+  padding: 0 3px 2px;
+  color: var(--text-faint);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.primary-platform-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.primary-platform-switch button {
+  min-height: 31px;
+  border-radius: 7px;
+  color: var(--text-faint);
+  font-size: 10px;
+  transition: 160ms ease;
+}
+
+.primary-platform-switch button.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.provider-account {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 7px;
+  border-radius: 7px;
+  color: var(--text-soft);
+  font-size: 10px;
+  text-align: left;
+}
+
+.provider-account:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.provider-account small {
+  overflow: hidden;
+  max-width: 125px;
+  color: var(--text-faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-account.is-logged-in small {
+  color: var(--accent-bright);
+}
+
+.provider-badge {
+  display: inline-flex;
+  height: 15px;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
 }
 
 /* Login dialog */
