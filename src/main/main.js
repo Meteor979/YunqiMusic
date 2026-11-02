@@ -65,6 +65,7 @@ const artistRequests = new Map()
 
 let mainWindow = null
 let webLoginTask = null
+let qqWebLoginTask = null
 let store = {
   cookies: {
     netease: '',
@@ -1412,6 +1413,121 @@ function registerIpc() {
     }
     saveStore()
     return { ok: true }
+  })
+
+  ipcMain.handle('auth:qq-web-login', async () => {
+    if (qqWebLoginTask) return qqWebLoginTask
+
+    qqWebLoginTask = new Promise(async (resolve) => {
+      const officialSession = session.fromPartition(
+        'persist:yunqi-qq-login',
+      )
+      await officialSession.clearStorageData({
+        storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'],
+      }).catch(() => {})
+
+      const loginWindow = new BrowserWindow({
+        width: 520,
+        height: 760,
+        minWidth: 440,
+        minHeight: 620,
+        parent: mainWindow || undefined,
+        show: false,
+        autoHideMenuBar: true,
+        title: '登录 QQ 音乐',
+        backgroundColor: '#ffffff',
+        icon: path.join(__dirname, '..', '..', 'build', 'icon.ico'),
+        webPreferences: {
+          partition: 'persist:yunqi-qq-login',
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      })
+
+      loginWindow.webContents.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      )
+      loginWindow.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+          const parsed = new URL(url)
+          if (
+            parsed.protocol === 'https:' &&
+            (parsed.hostname === 'qq.com' ||
+              parsed.hostname.endsWith('.qq.com'))
+          ) {
+            loginWindow.loadURL(parsed.href)
+          }
+        } catch {
+          // Ignore malformed URLs.
+        }
+        return { action: 'deny' }
+      })
+
+      let settled = false
+      let finishing = false
+      const scanCookies = async () => {
+        if (settled || finishing || loginWindow.isDestroyed()) return
+        const cookies = await officialSession.cookies.get({})
+        const musicKey = cookies.find(
+          (cookie) =>
+            ['qm_keyst', 'qqmusic_key', 'musickey'].includes(cookie.name) &&
+            Boolean(cookie.value),
+        )
+        if (!musicKey) return
+
+        finishing = true
+        try {
+          const cookie = cleanCookie(
+            cookies
+              .filter((item) => item.domain?.includes('qq.com'))
+              .map((item) => `${item.name}=${item.value}`),
+          )
+          if (!cookie) return
+
+          store.cookies.qq = cookie
+          saveStore()
+          const profile = await qqProvider.getProfile()
+          if (!profile) return
+          settled = true
+          resolve({ ok: true, profile })
+          if (!loginWindow.isDestroyed()) loginWindow.close()
+        } finally {
+          finishing = false
+        }
+      }
+
+      const onCookieChanged = () => scanCookies().catch(() => {})
+      officialSession.cookies.on('changed', onCookieChanged)
+      const cookiePoll = setInterval(
+        () => scanCookies().catch(() => {}),
+        1000,
+      )
+
+      loginWindow.once('ready-to-show', () => loginWindow.show())
+      loginWindow.on('closed', () => {
+        clearInterval(cookiePoll)
+        officialSession.cookies.removeListener('changed', onCookieChanged)
+        if (!settled) resolve({ ok: false, cancelled: true })
+      })
+
+      try {
+        await loginWindow.loadURL('https://y.qq.com/n/ryqq/login')
+      } catch (error) {
+        if (settled) return
+        settled = true
+        resolve({
+          ok: false,
+          error: `无法打开 QQ 音乐官方登录页面：${error.message}`,
+        })
+        if (!loginWindow.isDestroyed()) loginWindow.destroy()
+      }
+    }).finally(() => {
+      qqWebLoginTask = null
+    })
+
+    return qqWebLoginTask
   })
 
   ipcMain.handle('auth:web-login', async () => {

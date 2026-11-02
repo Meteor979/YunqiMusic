@@ -1,3 +1,5 @@
+const QRCode = require('qrcode')
+
 const coverUrl = (mid) =>
   mid
     ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${mid}.jpg`
@@ -87,6 +89,27 @@ function createQqAdapter({ getCookie, setCookie }) {
     if (cookie && cookie !== accountCookie()) setCookie(cookie)
   }
 
+  function cookieProfile(cookie = accountCookie()) {
+    const values = new Map(
+      String(cookie || '')
+        .split(';')
+        .map((part) => part.trim().split('='))
+        .filter(([name, value]) => name && value)
+        .map(([name, ...value]) => [name, value.join('=')]),
+    )
+    const uin =
+      values.get('uin') ||
+      values.get('qqmusic_uin') ||
+      values.get('wxuin') ||
+      ''
+    return {
+      id: String(uin || 'qq-user'),
+      name: uin ? `QQ音乐用户_${String(uin).slice(-4)}` : 'QQ 音乐用户',
+      avatar: '',
+      vip: false,
+    }
+  }
+
   async function getProfile() {
     if (!accountCookie()) return null
     try {
@@ -94,7 +117,7 @@ function createQqAdapter({ getCookie, setCookie }) {
       const response = await qq.login_status({ cookie: accountCookie() })
       const body = response.body || {}
       updateCookie(body.cookieStr)
-      if (body.code !== 200 || !body.isLogin) return null
+      if (body.code !== 200 || !body.isLogin) return cookieProfile()
       const account = body.account || {}
       return {
         id: String(account.userId || body.uin || ''),
@@ -106,7 +129,7 @@ function createQqAdapter({ getCookie, setCookie }) {
         vipType: account.vipLevel || account.vipTier || 0,
       }
     } catch {
-      return null
+      return cookieProfile()
     }
   }
 
@@ -359,12 +382,30 @@ function createQqAdapter({ getCookie, setCookie }) {
 
   async function startQrLogin() {
     const qq = await api()
-    const response = await qq.login_qr_create({ type: 'qq' })
-    const body = response.body || {}
+    let response = await qq.login_qr_create({ type: 'qq' })
+    let body = response.body || {}
+    if (!body.qrsig || !body.qrimg) {
+      response = await qq.login_qr_create({ type: 'mobile' })
+      body = response.body || {}
+    }
+    if (body.type === 'mobile' && body.qrcodeID && body.qrcode) {
+      const image = await QRCode.toDataURL(String(body.qrcode), {
+        margin: 1,
+        width: 320,
+        color: { dark: '#111111', light: '#ffffff' },
+      })
+      loginState = {
+        type: 'mobile',
+        qrcodeID: body.qrcodeID,
+        guid: body.guid,
+      }
+      return { key: body.qrcodeID, image }
+    }
     if (!body.qrsig || !body.qrimg) {
       throw new Error('QQ 音乐登录二维码生成失败')
     }
     loginState = {
+      type: 'qq',
       qrsig: body.qrsig,
       ptqrtoken: body.ptqrtoken,
       guid: body.guid,
@@ -379,14 +420,21 @@ function createQqAdapter({ getCookie, setCookie }) {
     if (!loginState) return { code: 800, message: '二维码已失效' }
     const qq = await api()
     const response = await qq.login_qr_check({
-      type: 'qq',
       ...loginState,
     })
     const body = response.body || {}
     if (body.code === 200 && body.cookieStr) {
       setCookie(body.cookieStr)
       loginState = null
-      return { code: 200, profile: await getProfile() }
+      const verifiedProfile = await getProfile()
+      return {
+        code: 200,
+        profile:
+          verifiedProfile || {
+            ...cookieProfile(body.cookieStr),
+            id: String(body.uin || cookieProfile(body.cookieStr).id),
+          },
+      }
     }
     return { code: body.code, message: body.message || '等待扫码' }
   }

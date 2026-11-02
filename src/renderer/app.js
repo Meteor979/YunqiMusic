@@ -2003,7 +2003,27 @@ async function openProviderLoginDialog(provider) {
 
 async function loginProvider(provider = state.primaryProvider) {
   setProfileOpen(false)
-  if (['kugou', 'qq', 'qishui'].includes(provider)) {
+  if (provider === 'qq') {
+    showToast('已打开 QQ 音乐官方登录窗口，请在窗口中扫码')
+    try {
+      const result = await api.webQqLogin()
+      if (!result?.ok) {
+        if (result?.error) showToast(result.error, 4200)
+        return
+      }
+      state.profiles.qq = result.profile
+      updateProfileUI()
+      showToast(`已登录 QQ 音乐：${result.profile?.name || ''}`)
+      if (state.primaryProvider === 'qq') {
+        refreshLibrary(true)
+        loadRoamQueue({ preservePlaying: true }).catch(() => {})
+      }
+    } catch (error) {
+      showToast(`QQ 音乐登录失败：${friendlyError(error)}`, 4200)
+    }
+    return
+  }
+  if (['kugou', 'qishui'].includes(provider)) {
     await openProviderLoginDialog(provider)
     return
   }

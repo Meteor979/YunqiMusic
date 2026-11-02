@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('yunqi', {
   installUpdate: (update) => invoke('updates:install', update),
   getVersion: () => invoke('app:version'),
   webLogin: () => invoke('auth:web-login'),
+  webQqLogin: () => invoke('auth:qq-web-login'),
   startKugouQrLogin: () => invoke('auth:kugou-qr-start'),
   checkKugouQrLogin: () => invoke('auth:kugou-qr-check'),
   startQqQrLogin: () => invoke('auth:qq-qr-start'),
