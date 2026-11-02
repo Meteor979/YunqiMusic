@@ -100,6 +100,7 @@ const el = {
   equalizerPresets: $('#equalizer-presets'),
   toastStack: $('#toast-stack'),
   tooltip: $('#app-tooltip'),
+  ambientScenes: $$('[data-ambient-scene]'),
 }
 
 const icons = {
@@ -134,6 +135,7 @@ let equalizerNodes = []
 let saveAudioTimer = null
 let tooltipTarget = null
 let tooltipTimer = null
+let ambientSceneIndex = 0
 
 function escapeHTML(value = '') {
   return String(value)
@@ -570,7 +572,24 @@ function hslToRgb(h, s, l) {
   return [channel(0), channel(8), channel(4)].map((value) => Math.round(value))
 }
 
-function applyPaletteFromColor(r, g, b) {
+function transitionAmbientPalette(hue, saturation) {
+  if (!el.ambientScenes.length) return
+  const nextIndex = ambientSceneIndex === 0 ? 1 : 0
+  const current = el.ambientScenes[ambientSceneIndex]
+  const next = el.ambientScenes[nextIndex]
+  const colorA = hslToRgb(hue, saturation * 0.9, 0.52)
+  const colorB = hslToRgb(hue + 24, saturation * 0.8, 0.43)
+  const colorC = hslToRgb(hue - 20, saturation * 0.65, 0.5)
+
+  next.style.setProperty('--scene-a', `rgba(${colorA.join(', ')}, 0.31)`)
+  next.style.setProperty('--scene-b', `rgba(${colorB.join(', ')}, 0.25)`)
+  next.style.setProperty('--scene-c', `rgba(${colorC.join(', ')}, 0.17)`)
+  next.classList.add('is-active')
+  current.classList.remove('is-active')
+  ambientSceneIndex = nextIndex
+}
+
+function applyPaletteFromColor(r, g, b, { ambient = true } = {}) {
   const hsl = rgbToHsl(r, g, b)
   const hue = Number.isFinite(hsl.h) ? hsl.h : 218
   const saturation = Math.max(0.28, Math.min(0.68, hsl.s || 0.24))
@@ -595,15 +614,16 @@ function applyPaletteFromColor(r, g, b) {
     '--vinyl-accent',
     `${hslToRgb(hue, saturation, 0.5).join(', ')}`,
   )
+  if (ambient) transitionAmbientPalette(hue, saturation)
 }
 
-function applyFallbackPalette(seed) {
+function applyFallbackPalette(seed, options = {}) {
   let hash = 0
   for (const char of String(seed || '云栖音乐')) {
     hash = (hash * 31 + char.charCodeAt(0)) >>> 0
   }
   const hue = hash % 360
-  applyPaletteFromColor(...hslToRgb(hue, 0.35, 0.53))
+  applyPaletteFromColor(...hslToRgb(hue, 0.35, 0.53), options)
 }
 
 async function extractPalette(source, token) {
@@ -663,15 +683,22 @@ async function extractPalette(source, token) {
 
 async function updatePalette(cover) {
   const token = ++state.artToken
-  applyFallbackPalette(cover || state.track?.name)
-  if (!cover) return
+  applyFallbackPalette(cover || state.track?.name, { ambient: false })
+  if (!cover) {
+    applyFallbackPalette(state.track?.name)
+    return
+  }
 
   try {
     const source = await api.getPaletteSource(cover)
     if (token !== state.artToken) return
-    if (source) await extractPalette(source, token)
+    if (source) {
+      await extractPalette(source, token)
+    } else {
+      applyFallbackPalette(state.track?.name)
+    }
   } catch {
-    // The hashed fallback palette is already applied.
+    applyFallbackPalette(state.track?.name)
   }
 }
 

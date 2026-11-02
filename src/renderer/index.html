@@ -87,8 +87,18 @@
     </svg>
 
     <div class="app-shell" id="app">
-      <div class="ambient ambient-primary" id="ambient-primary"></div>
-      <div class="ambient ambient-secondary" id="ambient-secondary"></div>
+      <div class="ambient-field" aria-hidden="true">
+        <div class="ambient-scene is-active" data-ambient-scene="0">
+          <i class="ambient-blob blob-a"></i>
+          <i class="ambient-blob blob-b"></i>
+          <i class="ambient-blob blob-c"></i>
+        </div>
+        <div class="ambient-scene" data-ambient-scene="1">
+          <i class="ambient-blob blob-a"></i>
+          <i class="ambient-blob blob-b"></i>
+          <i class="ambient-blob blob-c"></i>
+        </div>
+      </div>
       <div class="noise"></div>
 
       <header class="titlebar" id="titlebar">

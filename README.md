@@ -15,7 +15,7 @@
 - 曲目响度平衡与 10 段均衡器
 - GitHub Releases 自动更新，仅替换应用包并保留本机登录状态
 - 播放队列、随机播放、循环模式、系统媒体键
-- 根据专辑封面生成强调色与环境光
+- 根据专辑封面生成强调色，并以低速漂移和柔和交叉淡化构成环境光
 
 ## 开发
 
@@ -32,12 +32,20 @@ pnpm run pack:dir
 
 可运行目录生成在 `dist/win-unpacked`。直接生成单文件安装器需要 Electron Builder 的 Windows 打包工具。
 
+GitHub Release 同时提供：
+
+- `Yunqi-Music-<版本>-win-x64.zip`：完整 Windows 客户端，解压后可独立运行。
+- `app.asar`：只用于应用内增量更新。
+- `update.json`：更新版本和 SHA-256 校验清单。
+
+GitHub 仓库页面里的 **Code → Download ZIP** 下载的是源码，不是可直接运行的客户端。
+
 ## 发布更新
 
 GitHub Actions 会自动构建 `app.asar` 和 `update.json`，并发布到 GitHub Releases。发布后，应用会在账户菜单中自动发现并一键更新。
 
 ```powershell
-git tag v0.4.1
+git tag v0.4.2
 git push origin main --tags
 ```
 
