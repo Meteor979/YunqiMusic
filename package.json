@@ -1,6 +1,6 @@
 {
   "name": "yunqi-music",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "A focused multi-source desktop music player for NetEase Cloud Music, Kugou Music, QQ Music, and Qishui Music.",
   "author": "Yunqi Music",
   "repository": {
@@ -36,6 +36,10 @@
     "appId": "com.yunqi.music",
     "productName": "云栖音乐",
     "asar": true,
+    "disableAsarIntegrity": true,
+    "electronFuses": {
+      "enableEmbeddedAsarIntegrityValidation": false
+    },
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",
     "files": [

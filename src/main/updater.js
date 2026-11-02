@@ -176,48 +176,158 @@ async function downloadUpdate(update) {
   )
   fs.mkdirSync(updateDir, { recursive: true })
   const downloadPath = path.join(updateDir, 'app.asar')
-  fs.writeFileSync(downloadPath, data)
-  return { updateDir, downloadPath }
+  const file = fs.openSync(downloadPath, 'w')
+  try {
+    fs.writeFileSync(file, data)
+    fs.fsyncSync(file)
+  } finally {
+    fs.closeSync(file)
+  }
+  return {
+    updateDir,
+    downloadPath,
+    sha256: update.sha256,
+  }
 }
 
-function launchReplacement({ updateDir, downloadPath }) {
+function createReplacementScript() {
+  return `
+param(
+  [int]$AppProcessId,
+  [string]$Source,
+  [string]$Target,
+  [string]$Restart,
+  [string]$ExpectedHash,
+  [string]$LogPath
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-UpdateLog([string]$Message) {
+  try {
+    Add-Content -LiteralPath $LogPath -Value (
+      (Get-Date).ToString('o') + ' ' + $Message
+    ) -Encoding UTF8
+  } catch {
+    # Logging must never prevent the update.
+  }
+}
+
+function Test-FileHash([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+  return $actual -eq $ExpectedHash
+}
+
+$staging = $null
+$backup = $null
+try {
+  Write-UpdateLog 'Waiting for the application to exit.'
+  Wait-Process -Id $AppProcessId -ErrorAction SilentlyContinue
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    if (-not (Get-Process -Id $AppProcessId -ErrorAction SilentlyContinue)) {
+      break
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  Start-Sleep -Milliseconds 1800
+
+  $targetDirectory = Split-Path -Parent $Target
+  $staging = Join-Path $targetDirectory 'app.asar.update'
+  $backup = Join-Path $targetDirectory 'app.asar.previous'
+
+  Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+
+  Write-UpdateLog 'Copying the verified update onto the target volume.'
+  $staged = $false
+  for ($attempt = 0; $attempt -lt 80; $attempt++) {
+    try {
+      [System.IO.File]::Copy($Source, $staging, $true)
+      if (Test-FileHash $staging) {
+        $staged = $true
+        break
+      }
+      Write-UpdateLog 'The staged update did not match its expected hash.'
+    } catch {
+      Write-UpdateLog ('Staging attempt failed: ' + $_.Exception.Message)
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $staged) {
+    throw 'Could not create a verified local staging file.'
+  }
+
+  Write-UpdateLog 'Atomically replacing app.asar.'
+  $installed = $false
+  for ($attempt = 0; $attempt -lt 80; $attempt++) {
+    try {
+      if (Test-Path -LiteralPath $Target -PathType Leaf) {
+        [System.IO.File]::Replace($staging, $Target, $backup, $true)
+      } else {
+        Move-Item -LiteralPath $staging -Destination $Target -Force -ErrorAction Stop
+      }
+      if (Test-FileHash $Target) {
+        $installed = $true
+        break
+      }
+      Write-UpdateLog 'The installed package did not match its expected hash.'
+    } catch {
+      Write-UpdateLog ('Replacement attempt failed: ' + $_.Exception.Message)
+    }
+
+    if (-not (Test-Path -LiteralPath $staging -PathType Leaf)) {
+      try {
+        [System.IO.File]::Copy($Source, $staging, $true)
+      } catch {
+        Write-UpdateLog ('Restaging failed: ' + $_.Exception.Message)
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $installed) {
+    throw 'Could not atomically replace app.asar.'
+  }
+
+  Write-UpdateLog 'Update installed. Restarting the application.'
+  if ($Restart -and (Test-Path -LiteralPath $Restart -PathType Leaf)) {
+    Start-Process -FilePath $Restart -WorkingDirectory (Split-Path -Parent $Restart)
+  }
+} catch {
+  Write-UpdateLog ('Update failed: ' + $_.Exception.Message)
+  if (
+    $backup -and
+    (Test-Path -LiteralPath $backup -PathType Leaf) -and
+    -not (Test-Path -LiteralPath $Target -PathType Leaf)
+  ) {
+    try {
+      Copy-Item -LiteralPath $backup -Destination $Target -Force -ErrorAction Stop
+      Write-UpdateLog 'Restored the previous app.asar.'
+    } catch {
+      Write-UpdateLog ('Could not restore the previous app.asar: ' + $_.Exception.Message)
+    }
+  }
+} finally {
+  if ($staging) {
+    Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
+  }
+  if ($backup) {
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+  }
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
+`
+}
+
+function launchReplacement({ updateDir, downloadPath, sha256 }) {
   const appPath = app.getAppPath()
   if (!appPath.endsWith('app.asar')) {
     throw new Error('开发模式下不能安装更新')
   }
 
   const scriptPath = path.join(updateDir, 'apply-update.ps1')
-  const script = `
-param(
-  [int]$ProcessId,
-  [string]$Source,
-  [string]$Target,
-  [string]$Restart
-)
-
-try {
-  Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
-  Start-Sleep -Milliseconds 900
-
-  $copied = $false
-  for ($attempt = 0; $attempt -lt 20; $attempt++) {
-    try {
-      Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
-      $copied = $true
-      break
-    } catch {
-      Start-Sleep -Milliseconds 500
-    }
-  }
-
-  if ($copied) {
-    Start-Process -FilePath $Restart -WorkingDirectory (Split-Path -Parent $Restart)
-  }
-} finally {
-  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-}
-`
-
+  const logPath = path.join(updateDir, 'apply-update.log')
+  const script = createReplacementScript()
   fs.writeFileSync(scriptPath, `\ufeff${script}`, 'utf8')
   const helper = spawn(
     'powershell.exe',
@@ -230,7 +340,7 @@ try {
       'Hidden',
       '-File',
       scriptPath,
-      '-ProcessId',
+      '-AppProcessId',
       String(process.pid),
       '-Source',
       downloadPath,
@@ -238,6 +348,10 @@ try {
       appPath,
       '-Restart',
       process.execPath,
+      '-ExpectedHash',
+      sha256,
+      '-LogPath',
+      logPath,
     ],
     {
       detached: true,
@@ -255,7 +369,7 @@ async function installUpdate(update) {
 
   const downloaded = await downloadUpdate(update)
   launchReplacement(downloaded)
-  setTimeout(() => app.quit(), 150)
+  setTimeout(() => app.quit(), 300)
   return { started: true }
 }
 
@@ -263,4 +377,5 @@ module.exports = {
   checkForUpdate,
   installUpdate,
   UPDATE_REPOSITORY,
+  createReplacementScript,
 }
