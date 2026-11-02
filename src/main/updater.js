@@ -235,6 +235,7 @@ $Target = $env:YUNQI_UPDATE_TARGET
 $Restart = $env:YUNQI_UPDATE_RESTART
 $ExpectedHash = $env:YUNQI_UPDATE_HASH
 $LogPath = $env:YUNQI_UPDATE_LOG
+$ReadyPath = $env:YUNQI_UPDATE_READY
 
 $ErrorActionPreference = 'Stop'
 
@@ -258,6 +259,11 @@ $staging = $null
 $backup = $null
 try {
   Write-UpdateLog 'Waiting for the application to exit.'
+  try {
+    [System.IO.File]::WriteAllText($ReadyPath, 'ready')
+  } catch {
+    throw ('Could not signal update helper readiness: ' + $_.Exception.Message)
+  }
   Wait-Process -Id $AppProcessId -ErrorAction SilentlyContinue
   for ($attempt = 0; $attempt -lt 40; $attempt++) {
     if (-not (Get-Process -Id $AppProcessId -ErrorAction SilentlyContinue)) {
@@ -362,11 +368,13 @@ async function launchReplacement({ downloadPath, sha256 }) {
   }
 
   const logPath = path.join(app.getPath('userData'), 'yunqi-update.log')
+  const helperPath = path.join(path.dirname(downloadPath), 'apply-update.ps1')
+  const readyPath = path.join(path.dirname(downloadPath), 'helper.ready')
   const script = createReplacementScript()
-  const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
+  fs.writeFileSync(helperPath, `\uFEFF${script}`, 'utf8')
   updateLog(`Starting update helper for ${downloadPath}`)
 
-  await new Promise((resolve, reject) => {
+  const helper = await new Promise((resolve, reject) => {
     const helper = spawn(
       POWERSHELL_PATH,
       [
@@ -376,11 +384,12 @@ async function launchReplacement({ downloadPath, sha256 }) {
         'Bypass',
         '-WindowStyle',
         'Hidden',
-        '-EncodedCommand',
-        encodedScript,
+        '-File',
+        helperPath,
       ],
       {
         detached: true,
+        cwd: path.dirname(downloadPath),
         stdio: 'ignore',
         windowsHide: true,
         env: {
@@ -391,6 +400,7 @@ async function launchReplacement({ downloadPath, sha256 }) {
           YUNQI_UPDATE_RESTART: process.execPath,
           YUNQI_UPDATE_HASH: sha256,
           YUNQI_UPDATE_LOG: logPath,
+          YUNQI_UPDATE_READY: readyPath,
         },
       },
     )
@@ -398,13 +408,30 @@ async function launchReplacement({ downloadPath, sha256 }) {
     helper.once('spawn', () => {
       updateLog(`Update helper started with PID ${helper.pid}`)
       helper.unref()
-      resolve()
+      resolve(helper)
     })
     helper.once('error', (error) => {
       updateLog(`Update helper failed to start: ${error.message}`)
       reject(new Error(`更新辅助程序启动失败：${error.message}`))
     })
   })
+
+  const readyDeadline = Date.now() + 12000
+  while (Date.now() < readyDeadline) {
+    if (fs.existsSync(readyPath)) {
+      updateLog('Update helper is ready to apply the package')
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+
+  try {
+    helper.kill()
+  } catch {
+    // The helper may already have exited.
+  }
+  updateLog('Update helper did not signal readiness')
+  throw new Error('更新辅助程序未能启动，应用不会退出，请查看更新日志')
 }
 
 async function installUpdate(update) {
