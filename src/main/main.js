@@ -38,6 +38,30 @@ const QUALITY_LEVELS = new Set([
   'higher',
   'standard',
 ])
+const ROAM_MOODS = new Set([
+  'random',
+  'calm',
+  'cafe',
+  'jazz',
+  'night',
+  'rain',
+  'electronic',
+])
+const ROAM_MOOD_QUERIES = {
+  calm: '舒缓 放松 轻音乐',
+  cafe: '咖啡屋 慵懒 城市',
+  jazz: '爵士 Jazz',
+  night: '深夜 夜晚 氛围',
+  rain: '雨天 安静 氛围',
+  electronic: '轻电子 Chill Electronic',
+}
+const directUrlCache = new Map()
+const artistCache = new Map()
+const artistAlbumsCache = new Map()
+const libraryCache = new Map()
+const albumCache = new Map()
+const albumRequests = new Map()
+const artistRequests = new Map()
 
 let mainWindow = null
 let webLoginTask = null
@@ -58,6 +82,8 @@ let store = {
   equalizerEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   qualityLevel: 'auto',
+  roamMode: 'continuous',
+  roamMood: 'random',
 }
 const imageCache = new Map()
 let kugouProvider = null
@@ -162,6 +188,9 @@ function loadStore() {
       qualityLevel: QUALITY_LEVELS.has(raw.qualityLevel)
         ? raw.qualityLevel
         : store.qualityLevel,
+      roamMode:
+        raw.roamMode === 'explore' ? 'explore' : 'continuous',
+      roamMood: ROAM_MOODS.has(raw.roamMood) ? raw.roamMood : 'random',
     }
     delete store.cookieEncrypted
     delete store.cookiesEncrypted
@@ -181,6 +210,8 @@ function saveStore() {
     equalizerEnabled: store.equalizerEnabled,
     equalizerBands: store.equalizerBands,
     qualityLevel: store.qualityLevel,
+    roamMode: store.roamMode,
+    roamMood: store.roamMood,
     primaryProvider: store.primaryProvider,
     secondaryEnabled: store.secondaryEnabled,
     kugouDevice: store.kugouDevice,
@@ -391,34 +422,129 @@ async function getNeteaseRoamSongs(limit = 8) {
   return getDailySongs()
 }
 
-async function getLibrary() {
+function getProviderRoamTracks(provider, limit) {
+  if (provider === 'kugou') return kugouProvider.roam(limit)
+  if (provider === 'qq') return qqProvider.roam(limit)
+  if (provider === 'qishui') return qishuiProvider.roam(limit)
+  return getNeteaseRoamSongs(limit)
+}
+
+async function getMoodRoamTracks(provider, mood, limit) {
+  const query = ROAM_MOOD_QUERIES[mood]
+  if (!query) return getProviderRoamTracks(provider, limit)
+  const tracks = await searchProvider(provider, query).catch(() => [])
+  if (tracks.length) return tracks.slice(0, limit)
+  return getProviderRoamTracks(provider, limit)
+}
+
+async function getRoamTracks(
+  limit = 8,
+  mode = store.roamMode,
+  mood = store.roamMood,
+) {
+  const count = Math.max(1, Math.min(20, Number(limit) || 8))
+  const selectedMood = ROAM_MOODS.has(mood) ? mood : 'random'
+  if (mode !== 'explore') {
+    return selectedMood === 'random'
+      ? getProviderRoamTracks(store.primaryProvider, count)
+      : getMoodRoamTracks(store.primaryProvider, selectedMood, count)
+  }
+
+  const providers = store.secondaryEnabled
+    ? [
+        store.primaryProvider,
+        ...['netease', 'kugou', 'qq', 'qishui'].filter(
+          (provider) => provider !== store.primaryProvider,
+        ),
+      ]
+    : [store.primaryProvider]
+  const responses = await Promise.allSettled(
+    providers.map((provider) =>
+      selectedMood === 'random'
+        ? getProviderRoamTracks(
+            provider,
+            Math.max(4, Math.ceil(count / Math.min(2, providers.length))),
+          )
+        : getMoodRoamTracks(
+            provider,
+            selectedMood,
+            Math.max(4, Math.ceil(count / Math.min(2, providers.length))),
+          ),
+    ),
+  )
+  const batches = responses
+    .filter((response) => response.status === 'fulfilled')
+    .map((response) => response.value || [])
+  const tracks = []
+  const seen = new Set()
+  const largestBatch = Math.max(0, ...batches.map((batch) => batch.length))
+
+  for (let index = 0; index < largestBatch && tracks.length < count; index += 1) {
+    for (const batch of batches) {
+      const track = batch[index]
+      if (!track?.id) continue
+      const key = `${normalizedMatchText(track.name)}|${normalizedMatchText(track.artists?.[0])}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      tracks.push(track)
+      if (tracks.length >= count) break
+    }
+  }
+
+  if (tracks.length) return tracks
+  return selectedMood === 'random'
+    ? getProviderRoamTracks(store.primaryProvider, count)
+    : getMoodRoamTracks(store.primaryProvider, selectedMood, count)
+}
+
+function decorateLibrary(library, provider) {
+  const seen = new Set()
+  const likedTracks = (library.likedTracks || []).filter((track) => {
+    if (!track?.id || seen.has(track.id)) return false
+    seen.add(track.id)
+    return true
+  })
+  const profileName = library.profile?.name || ''
+  return {
+    ...library,
+    provider,
+    likedTracks,
+    favoriteAlbums: albumsFromTracks(likedTracks, profileName),
+    playlists: (library.playlists || []).filter(
+      (playlist) => !/我喜欢|喜欢的音乐|默认收藏/.test(playlist.name || ''),
+    ),
+  }
+}
+
+async function loadLibrary() {
   if (store.primaryProvider === 'qishui') {
     const library = await qishuiProvider.getLibrary()
-    return {
+    return decorateLibrary({
       ...library,
       provider: 'qishui',
-    }
+    }, 'qishui')
   }
 
   if (store.primaryProvider === 'qq') {
     const library = await qqProvider.getLibrary()
-    return {
+    return decorateLibrary({
       ...library,
       provider: 'qq',
-    }
+    }, 'qq')
   }
 
   if (store.primaryProvider === 'kugou') {
     const library = await kugouProvider.getLibrary()
-    return {
+    return decorateLibrary({
       ...library,
       provider: 'kugou',
-    }
+    }, 'kugou')
   }
 
   const profile = await getNeteaseProfile()
   let playlists = []
   let recent = []
+  let likedTracks = []
 
   if (profile) {
     try {
@@ -443,15 +569,47 @@ async function getLibrary() {
     } catch {
       recent = []
     }
+
+    const likedPlaylist = playlists.find((playlist) =>
+      /我喜欢|喜欢的音乐|默认收藏/.test(playlist.name),
+    )
+    if (likedPlaylist) {
+      try {
+        const body = await apiCall('playlist_track_all', {
+          id: Number(likedPlaylist.providerId),
+          limit: 1000,
+        })
+        likedTracks = (body.songs || [])
+          .map(normalizeNeteaseSong)
+          .filter((song) => song.id)
+      } catch {
+        likedTracks = []
+      }
+    }
   }
 
-  return {
+  return decorateLibrary({
     profile,
     provider: 'netease',
     playlists,
     recent,
     daily: await getDailySongs().catch(() => []),
+    likedTracks,
+  }, 'netease')
+}
+
+async function getLibrary({ force = false } = {}) {
+  const cacheKey = store.primaryProvider
+  const cached = libraryCache.get(cacheKey)
+  if (!force && cached && cached.expiresAt > Date.now()) {
+    return cached.value
   }
+  const value = await loadLibrary()
+  libraryCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + 3 * 60 * 1000,
+  })
+  return value
 }
 
 async function getNeteaseSongUrl(track, qualityLevel = 'auto') {
@@ -531,6 +689,350 @@ function normalizedMatchText(value) {
     .replace(/[\s\-_.·,，/]/g, '')
 }
 
+async function loadAlbum(track) {
+  const albumName = String(track?.album || '').trim()
+  if (!albumName) throw new Error('这首歌没有专辑信息')
+
+  if (
+    track.provider === 'netease' &&
+    Number(track.albumId || track.providerData?.albumId)
+  ) {
+    const albumId = Number(track.albumId || track.providerData.albumId)
+    const body = await apiCall('album', { id: albumId })
+    const album = body.album || {}
+    const tracks = (body.songs || [])
+      .map(normalizeNeteaseSong)
+      .filter((song) => song.id)
+    return {
+      id: `netease:album:${albumId}`,
+      kind: 'album',
+      provider: 'netease',
+      providerId: String(albumId),
+      name: album.name || albumName,
+      cover: normalizeArtwork(album.picUrl || album.blurPicUrl),
+      description: album.description || album.briefDesc || '',
+      creator:
+        album.artist?.name ||
+        (album.artists || []).map((artist) => artist.name).filter(Boolean).join(' / ') ||
+        track.artists?.join(' / ') ||
+        '',
+      trackCount: Number(album.size || tracks.length),
+      tracks,
+    }
+  }
+
+  const keywords = `${albumName} ${track.artists?.[0] || ''}`.trim()
+  const songs = await searchProvider(track.provider, keywords)
+  const expectedAlbum = normalizedMatchText(albumName)
+  let tracks = songs.filter(
+    (song) => normalizedMatchText(song.album) === expectedAlbum,
+  )
+  if (!tracks.length) {
+    tracks = songs.filter((song) =>
+      normalizedMatchText(song.album).includes(expectedAlbum),
+    )
+  }
+  if (!tracks.length) throw new Error('没有找到这张专辑')
+
+  return {
+    id: `${track.provider}:album:${expectedAlbum}`,
+    kind: 'album',
+    provider: track.provider,
+    providerId: expectedAlbum,
+    name: tracks[0].album || albumName,
+    cover: tracks[0].cover || track.cover || '',
+    description: '',
+    creator: track.artists?.join(' / ') || '',
+    trackCount: tracks.length,
+    tracks,
+  }
+}
+
+async function getAlbum(track) {
+  const albumName = String(track?.album || '').trim()
+  if (!albumName) throw new Error('这首歌没有专辑信息')
+  const albumId = String(
+    track.albumId || track.providerData?.albumId || normalizedMatchText(albumName),
+  )
+  const cacheKey = `${track.provider}:${albumId}`
+  const cached = albumCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  if (albumRequests.has(cacheKey)) return albumRequests.get(cacheKey)
+
+  const request = loadAlbum(track)
+    .then((value) => {
+      albumCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      })
+      return value
+    })
+    .finally(() => albumRequests.delete(cacheKey))
+  albumRequests.set(cacheKey, request)
+  return request
+}
+
+function albumsFromTracks(tracks, artistName) {
+  const albumMap = new Map()
+  for (const song of tracks) {
+    if (!song.album) continue
+    const album = albumMap.get(song.album) || {
+      id: `${song.provider}:album:${normalizedMatchText(song.album)}`,
+      provider: song.provider,
+      name: song.album,
+      cover: song.cover,
+      artist: artistName,
+      heat: 0,
+      sampleTrack: song,
+    }
+    album.heat += 1
+    albumMap.set(song.album, album)
+  }
+  return [...albumMap.values()].sort(
+    (left, right) => right.heat - left.heat,
+  )
+}
+
+async function loadArtist(track) {
+  const artistName = String(track?.artists?.[0] || '').trim()
+  if (!artistName) throw new Error('这首歌没有歌手信息')
+  const artistId = String(
+    track.artistIds?.[0] || track.providerData?.artistId || '',
+  )
+  const cacheKey = `${track.provider}:${artistId || normalizedMatchText(artistName)}`
+  const cached = artistCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  if (track.provider === 'netease' && artistId) {
+    const [detail, songsBody] = await Promise.all([
+      apiCall('artist_detail', { id: Number(artistId) }),
+      apiCall('artist_songs', {
+        id: Number(artistId),
+        limit: 40,
+        order: 'hot',
+      }),
+    ])
+    const artist = detail.data?.artist || detail.artist || {}
+    const tracks = (songsBody.songs || [])
+      .map(normalizeNeteaseSong)
+      .filter((song) => song.id)
+    const result = {
+      id: `netease:artist:${artistId}`,
+      kind: 'artist',
+      provider: 'netease',
+      providerId: artistId,
+      name: artist.name || artistName,
+      avatar: normalizeArtwork(artist.avatar || artist.picUrl || artist.img1v1Url),
+      bio: artist.briefDesc || artist.description || '',
+      albumCount: Number(artist.albumSize || 0),
+      trackCount: Number(artist.musicSize || tracks.length),
+      followerCount: Number(artist.fansCount || 0),
+      tracks,
+      albums: albumsFromTracks(tracks, artist.name || artistName),
+    }
+    artistCache.set(cacheKey, {
+      value: result,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    })
+    return result
+  }
+
+  if (track.provider === 'qq') {
+    const artist = await qqProvider.getArtist(track).catch(() => null)
+    if (artist?.tracks?.length) {
+      artist.albums = albumsFromTracks(artist.tracks, artist.name)
+      artistCache.set(cacheKey, {
+        value: artist,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      })
+      return artist
+    }
+  }
+
+  const songs = await searchProvider(track.provider, artistName)
+  const expectedArtist = normalizedMatchText(artistName)
+  const tracks = songs.filter((song) =>
+    song.artists?.some((name) =>
+      normalizedMatchText(name).includes(expectedArtist),
+    ),
+  )
+  if (!tracks.length) throw new Error('没有找到这位歌手')
+  const result = {
+    id: `${track.provider}:artist:${expectedArtist}`,
+    kind: 'artist',
+    provider: track.provider,
+    providerId: expectedArtist,
+    name: artistName,
+    avatar: tracks.find((song) => song.cover)?.cover || '',
+    bio: '',
+    albumCount: new Set(tracks.map((song) => song.album).filter(Boolean)).size,
+    trackCount: tracks.length,
+    followerCount: 0,
+    tracks,
+    albums: albumsFromTracks(tracks, artistName),
+  }
+  artistCache.set(cacheKey, {
+    value: result,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  })
+  return result
+}
+
+async function getArtist(track) {
+  const artistName = String(track?.artists?.[0] || '').trim()
+  if (!artistName) throw new Error('这首歌没有歌手信息')
+  const artistId = String(
+    track.artistIds?.[0] || track.providerData?.artistId || '',
+  )
+  const cacheKey = `${track.provider}:${artistId || normalizedMatchText(artistName)}`
+  const cached = artistCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  if (artistRequests.has(cacheKey)) return artistRequests.get(cacheKey)
+
+  const request = loadArtist(track).finally(() =>
+    artistRequests.delete(cacheKey),
+  )
+  artistRequests.set(cacheKey, request)
+  return request
+}
+
+async function getArtistAlbums(artist) {
+  if (!artist?.provider) return []
+  const cacheKey = `${artist.provider}:${artist.providerId || artist.id}`
+  const cached = artistAlbumsCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  if (artist.provider !== 'netease' || !artist.providerId) {
+    return artist.albums || []
+  }
+
+  const body = await apiCall('artist_album', {
+    id: Number(artist.providerId),
+    limit: 30,
+    offset: 0,
+  })
+  const albums = (body.hotAlbums || [])
+    .map((album) => ({
+      id: `netease:album:${album.id}`,
+      provider: 'netease',
+      name: album.name || '未命名专辑',
+      cover: normalizeArtwork(album.picUrl || album.blurPicUrl),
+      artist: (album.artists || [])
+        .map((item) => item.name)
+        .filter(Boolean)
+        .join(' / '),
+      publishTime: Number(album.publishTime || 0),
+      sampleTrack: {
+        id: `netease:album-source:${album.id}`,
+        provider: 'netease',
+        providerId: String(album.id),
+        providerData: { id: String(album.id) },
+        name: album.name || '',
+        artists: (album.artists || [])
+          .map((item) => item.name)
+          .filter(Boolean),
+        album: album.name || '',
+        albumId: album.id,
+        cover: normalizeArtwork(album.picUrl || album.blurPicUrl),
+      },
+    }))
+    .filter((album) => album.sampleTrack.albumId)
+
+  artistAlbumsCache.set(cacheKey, {
+    value: albums,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  })
+  return albums
+}
+
+function prefetchTrackContext(track) {
+  if (!track?.provider || !track?.providerId) return
+  const tasks = []
+  if (track.album) tasks.push(getAlbum(track))
+  if (track.artists?.length) tasks.push(getArtist(track))
+  if (tasks.length) void Promise.allSettled(tasks)
+}
+
+async function setArtistFollow(artist, follow) {
+  if (artist?.provider === 'netease' && artist.providerId) {
+    await apiCall('artist_sub', {
+      id: Number(artist.providerId),
+      t: follow ? 1 : 0,
+    })
+  }
+  return { following: Boolean(follow) }
+}
+
+async function setAlbumSubscribe(album, subscribed) {
+  if (album?.provider === 'netease' && album.providerId) {
+    await apiCall('album_sub', {
+      id: Number(album.providerId),
+      t: subscribed ? 1 : 0,
+    })
+  }
+  return { subscribed: Boolean(subscribed) }
+}
+
+function groupSearchSongs(songs) {
+  const groups = []
+  const groupsByKey = new Map()
+
+  for (const track of songs) {
+    const title = normalizedMatchText(track.name)
+    const artist = normalizedMatchText(track.artists?.[0])
+    const key = title ? `${title}|${artist}` : track.id
+    let group = groupsByKey.get(key)
+    if (!group) {
+      group = []
+      groupsByKey.set(key, group)
+      groups.push(group)
+    }
+    group.push(track)
+  }
+
+  return groups
+}
+
+async function mapWithConcurrency(items, limit, worker) {
+  let nextIndex = 0
+  const runners = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex
+        nextIndex += 1
+        await worker(items[index], index)
+      }
+    },
+  )
+  await Promise.all(runners)
+}
+
+async function rankSearchSongs(songs, qualityLevel) {
+  const groups = groupSearchSongs(songs)
+  const duplicateGroups = groups.slice(0, 24).filter((group) => group.length > 1)
+
+  await mapWithConcurrency(duplicateGroups, 3, async (group) => {
+    for (let index = 0; index < group.length; index += 1) {
+      const track = group[index]
+      let result
+      try {
+        result = await getDirectProviderSongUrl(track, qualityLevel)
+      } catch {
+        continue
+      }
+      if (!result?.url || result.limited) continue
+      if (index > 0) {
+        group.splice(index, 1)
+        group.unshift(track)
+      }
+      break
+    }
+  })
+
+  return groups.flat()
+}
+
 async function findFallbackTrack(track, provider) {
   const keywords = `${track.name} ${track.artists?.[0] || ''}`.trim()
   const candidates = await searchProvider(provider, keywords).catch(() => [])
@@ -551,7 +1053,11 @@ async function findFallbackTrack(track, provider) {
   )
 }
 
-async function getProviderSongUrl(track, qualityLevel = 'auto') {
+async function getDirectProviderSongUrl(track, qualityLevel = 'auto') {
+  const cacheKey = `${track.id}:${qualityLevel}`
+  const cached = directUrlCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
   let direct
   if (track.provider === 'kugou') {
     direct = await kugouProvider.songUrl(track, qualityLevel)
@@ -562,6 +1068,19 @@ async function getProviderSongUrl(track, qualityLevel = 'auto') {
   } else {
     direct = await getNeteaseSongUrl(track, qualityLevel)
   }
+  if (direct) {
+    directUrlCache.set(cacheKey, {
+      value: direct,
+      expiresAt:
+        Date.now() +
+        (direct.url && !direct.limited ? 5 * 60 * 1000 : 30 * 1000),
+    })
+  }
+  return direct
+}
+
+async function getProviderSongUrl(track, qualityLevel = 'auto') {
+  const direct = await getDirectProviderSongUrl(track, qualityLevel)
   if (direct?.url && !direct.limited) return direct
 
   if (
@@ -574,17 +1093,11 @@ async function getProviderSongUrl(track, qualityLevel = 'auto') {
     for (const secondary of secondaries) {
       const fallbackTrack = await findFallbackTrack(track, secondary)
       if (!fallbackTrack) continue
-      let fallback
-      if (secondary === 'kugou') {
-        fallback = await kugouProvider.songUrl(fallbackTrack, qualityLevel)
-      } else if (secondary === 'qq') {
-        fallback = await qqProvider.songUrl(fallbackTrack, qualityLevel)
-      } else if (secondary === 'qishui') {
-        fallback = await qishuiProvider.songUrl(fallbackTrack, qualityLevel)
-      } else {
-        fallback = await getNeteaseSongUrl(fallbackTrack, qualityLevel)
-      }
-      if (fallback?.url) {
+      const fallback = await getDirectProviderSongUrl(
+        fallbackTrack,
+        qualityLevel,
+      )
+      if (fallback?.url && !fallback.limited) {
         return { ...fallback, fallbackUsed: true }
       }
     }
@@ -607,21 +1120,15 @@ function registerIpc() {
   ipcMain.handle('app:bootstrap', async () => {
     const [profiles, roam] = await Promise.all([
       getProviderProfiles(),
-      (
-        store.primaryProvider === 'kugou'
-          ? kugouProvider.roam(8)
-          : store.primaryProvider === 'qq'
-            ? qqProvider.roam(8)
-            : store.primaryProvider === 'qishui'
-              ? qishuiProvider.roam(8)
-              : getNeteaseRoamSongs(8)
-      ).catch(() => []),
+      getRoamTracks(8, store.roamMode, store.roamMood).catch(() => []),
     ])
     return {
       profile: profiles[store.primaryProvider],
       profiles,
       primaryProvider: store.primaryProvider,
       secondaryEnabled: store.secondaryEnabled,
+      roamMode: store.roamMode,
+      roamMood: store.roamMood,
       roam,
       audio: {
         loudnessEnabled: store.loudnessEnabled,
@@ -633,19 +1140,31 @@ function registerIpc() {
   })
 
   ipcMain.handle('music:daily', async () => getDailySongs())
-  ipcMain.handle('music:roam', async (_event, limit) => {
-    const count = Math.max(1, Math.min(12, Number(limit) || 8))
-    return (
-      store.primaryProvider === 'kugou'
-        ? kugouProvider.roam(count)
-        : store.primaryProvider === 'qq'
-          ? qqProvider.roam(count)
-          : store.primaryProvider === 'qishui'
-            ? qishuiProvider.roam(count)
-            : getNeteaseRoamSongs(count)
-    )
+  ipcMain.handle('music:roam', async (
+    _event,
+    limit,
+    mode = store.roamMode,
+    mood = store.roamMood,
+  ) =>
+    getRoamTracks(
+      limit,
+      mode === 'explore' ? 'explore' : 'continuous',
+      ROAM_MOODS.has(mood) ? mood : 'random',
+    ),
+  )
+  ipcMain.handle('music:set-roam-mode', (_event, mode) => {
+    store.roamMode = mode === 'explore' ? 'explore' : 'continuous'
+    saveStore()
+    return { roamMode: store.roamMode }
   })
-  ipcMain.handle('music:library', async () => getLibrary())
+  ipcMain.handle('music:set-roam-mood', (_event, mood) => {
+    store.roamMood = ROAM_MOODS.has(mood) ? mood : 'random'
+    saveStore()
+    return { roamMood: store.roamMood }
+  })
+  ipcMain.handle('music:library', async (_event, force = false) =>
+    getLibrary({ force: Boolean(force) }),
+  )
 
   ipcMain.handle('music:search', async (_event, query) => {
     const keywords = String(query || '').trim().slice(0, 80)
@@ -662,7 +1181,11 @@ function registerIpc() {
         searchProvider(provider, keywords).catch(() => []),
       ),
     ])
-    const [playlistBody] = await Promise.all([
+    const [songs, playlistBody] = await Promise.all([
+      rankSearchSongs(
+        [primarySongs, ...secondaryResults].flat(),
+        store.qualityLevel,
+      ),
       (
         store.primaryProvider === 'kugou'
           ? kugouProvider.searchPlaylists(keywords)
@@ -681,7 +1204,7 @@ function registerIpc() {
     ])
 
     return {
-      songs: [primarySongs, ...secondaryResults].flat(),
+      songs,
       playlists: (playlistBody || []).filter(Boolean),
     }
   })
@@ -725,6 +1248,22 @@ function registerIpc() {
 
     return playlist
   })
+
+  ipcMain.handle('music:album', async (_event, track) => getAlbum(track))
+  ipcMain.handle('music:artist', async (_event, track) => getArtist(track))
+  ipcMain.handle('music:prefetch-track-context', (_event, track) => {
+    prefetchTrackContext(track)
+    return { started: true }
+  })
+  ipcMain.handle('music:artist-albums', (_event, artist) =>
+    getArtistAlbums(artist),
+  )
+  ipcMain.handle('music:follow-artist', (_event, artist, follow) =>
+    setArtistFollow(artist, follow),
+  )
+  ipcMain.handle('music:subscribe-album', (_event, album, subscribed) =>
+    setAlbumSubscribe(album, subscribed),
+  )
 
   ipcMain.handle('music:url', async (_event, track, qualityLevel = 'auto') => {
     if (!track?.provider || !track?.providerId) {

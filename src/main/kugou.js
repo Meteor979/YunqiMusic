@@ -514,13 +514,20 @@ function createKugouAdapter({
   }
 
   async function getLibrary() {
-    const [profile, playlists, recent, daily] = await Promise.all([
+    const [profile, playlists, recent, daily, likedRaw] = await Promise.all([
       getProfile(),
       getPlaylists().catch(() => []),
       getRecent().catch(() => []),
       getDaily().catch(() => []),
+      getLikedTracks().catch(() => []),
     ])
-    return { profile, playlists, recent, daily }
+    return {
+      profile,
+      playlists,
+      recent,
+      daily,
+      likedTracks: likedRaw.map(normalizeKugouSong).filter(Boolean),
+    }
   }
 
   async function startQrLogin() {

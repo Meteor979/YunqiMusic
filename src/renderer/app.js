@@ -18,8 +18,12 @@ const state = {
   daily: [],
   recent: [],
   playlists: [],
+  likedTracks: [],
+  favoriteAlbums: [],
   queue: [],
   queueMode: 'roam',
+  roamMode: 'continuous',
+  roamMood: 'random',
   currentIndex: -1,
   track: null,
   currentView: 'now',
@@ -45,6 +49,8 @@ const state = {
   urlCache: new Map(),
   updateInfo: null,
   checkingUpdate: false,
+  followedArtists: {},
+  subscribedAlbums: {},
   loginQrTimer: null,
   loginQrBusy: false,
   loginQrProvider: '',
@@ -55,10 +61,13 @@ const el = {
   audio,
   albumCover: $('#album-cover'),
   coverStage: $('#cover-stage'),
+  trackCopy: $('.track-copy'),
   trackName: $('#track-name'),
   trackTitleViewport: $('#track-title-viewport'),
   trackArtist: $('#track-artist'),
+  trackArtistName: $('#track-artist-name'),
   trackAlbum: $('#track-album'),
+  trackAlbumName: $('#track-album-name'),
   titlebarNow: $('#titlebar-now'),
   currentTime: $('#current-time'),
   totalTime: $('#total-time'),
@@ -103,7 +112,7 @@ const el = {
   equalizerPresets: $('#equalizer-presets'),
   toastStack: $('#toast-stack'),
   tooltip: $('#app-tooltip'),
-  ambientScenes: $$('[data-ambient-scene]'),
+  ambientCanvas: $('#ambient-canvas'),
 }
 
 const icons = {
@@ -145,12 +154,26 @@ let normalizerGain = null
 let compressor = null
 let equalizerNodes = []
 let saveAudioTimer = null
+let contextPrefetchTimer = null
 let tooltipTarget = null
 let tooltipTimer = null
-let ambientSceneIndex = 0
-let ambientTransitionBusy = false
-let ambientTransitionTimer = null
-let pendingAmbientPalette = null
+let ambientContext = null
+let ambientFrame = null
+let ambientLastFrame = 0
+const ambientPalette = {
+  current: {
+    a: [88, 104, 130],
+    b: [45, 51, 65],
+  },
+  target: {
+    a: [88, 104, 130],
+    b: [45, 51, 65],
+  },
+}
+const AMBIENT_POSITIONS = {
+  a: { x: 0.3, y: 0.27 },
+  b: { x: 0.82, y: 0.8 },
+}
 
 function escapeHTML(value = '') {
   return String(value)
@@ -424,11 +447,85 @@ function updateTrackTitleMotion() {
   })
 }
 
+function refreshTextMarquees(root = document) {
+  const elements = [
+    ...(root.matches?.('.text-marquee') ? [root] : []),
+    ...root.querySelectorAll?.('.text-marquee'),
+  ]
+  for (const viewport of elements) {
+    viewport.classList.remove('is-overflowing')
+    const content = viewport.querySelector(':scope > .marquee-content')
+    if (!content || !viewport.clientWidth) continue
+    const distance = content.scrollWidth - viewport.clientWidth
+    if (distance <= 2) continue
+    const duration = Math.max(12, Math.min(34, 10 + distance / 45))
+    viewport.style.setProperty('--marquee-shift', `${-distance}px`)
+    viewport.style.setProperty('--marquee-duration', `${duration}s`)
+    viewport.classList.add('is-overflowing')
+  }
+}
+
+function initializeTextMarquees() {
+  let frame = null
+  const schedule = () => {
+    if (frame) cancelAnimationFrame(frame)
+    frame = requestAnimationFrame(() => {
+      frame = null
+      refreshTextMarquees()
+    })
+  }
+  new MutationObserver(schedule).observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  })
+  schedule()
+}
+
+function applyStaggeredReveal(root) {
+  if (!root) return
+  const items = root.querySelectorAll(
+    '.artist-hero, .playlist-hero, .login-banner, .section-heading, .song-row, .album-card, .playlist-card, .mini-track, .queue-item, .empty-state',
+  )
+  items.forEach((element, index) => {
+    element.style.setProperty('--reveal-index', String(Math.min(index, 18)))
+    element.classList.add('reveal-item')
+  })
+}
+
 function updateTrackUI(track) {
   state.track = track
+  el.trackCopy.classList.remove('is-refreshing')
+  requestAnimationFrame(() => {
+    if (state.track === track) {
+      el.trackCopy.classList.add('is-refreshing')
+    }
+  })
+  if (contextPrefetchTimer) window.clearTimeout(contextPrefetchTimer)
+  contextPrefetchTimer = null
+  if (track?.provider && track?.providerId) {
+    contextPrefetchTimer = window.setTimeout(() => {
+      contextPrefetchTimer = null
+      if (state.track?.id === track.id) {
+        api.prefetchTrackContext(track).catch(() => {})
+      }
+    }, 300)
+  }
   el.trackName.textContent = track?.name || ''
-  el.trackArtist.textContent = track?.artists?.join(' / ') || ''
-  el.trackAlbum.textContent = track?.album || ''
+  el.trackArtistName.textContent = track?.artists?.join(' / ') || ''
+  el.trackArtist.disabled = !track?.artists?.length
+  el.trackArtist.setAttribute(
+    'aria-label',
+    track?.artists?.length
+      ? `打开歌手：${track.artists.join(' / ')}`
+      : '没有歌手信息',
+  )
+  el.trackAlbumName.textContent = track?.album || ''
+  el.trackAlbum.disabled = !track?.album
+  el.trackAlbum.setAttribute(
+    'aria-label',
+    track?.album ? `打开专辑：${track.album}` : '没有专辑信息',
+  )
   el.titlebarNow.textContent = track
     ? `${track.name} · ${track.artists?.join(' / ') || '未知歌手'}`
     : '漫游'
@@ -543,6 +640,17 @@ function renderLyrics(lyrics) {
       `,
     )
     .join('')
+  revealLyricLines()
+}
+
+function revealLyricLines() {
+  $$('.lyric-line').forEach((line, index) => {
+    line.style.setProperty(
+      '--lyric-reveal-delay',
+      `${Math.min(index, 16) * 58}ms`,
+    )
+    line.classList.add('lyric-line-reveal')
+  })
 }
 
 async function loadLyrics(track, token) {
@@ -589,37 +697,102 @@ function hslToRgb(h, s, l) {
   return [channel(0), channel(8), channel(4)].map((value) => Math.round(value))
 }
 
+function resizeAmbientCanvas() {
+  const canvas = el.ambientCanvas
+  if (!canvas) return
+  const width = Math.max(
+    420,
+    Math.min(680, Math.round(window.innerWidth * 0.46)),
+  )
+  const height = Math.max(
+    240,
+    Math.round((width * window.innerHeight) / Math.max(1, window.innerWidth)),
+  )
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width
+    canvas.height = height
+  }
+}
+
+function drawAmbientHalo(context, x, y, radius, color, alpha) {
+  const gradient = context.createRadialGradient(x, y, 0, x, y, radius)
+  gradient.addColorStop(0, `rgba(${color.join(', ')}, ${alpha})`)
+  gradient.addColorStop(0.16, `rgba(${color.join(', ')}, ${alpha * 0.76})`)
+  gradient.addColorStop(0.34, `rgba(${color.join(', ')}, ${alpha * 0.46})`)
+  gradient.addColorStop(0.54, `rgba(${color.join(', ')}, ${alpha * 0.2})`)
+  gradient.addColorStop(0.72, `rgba(${color.join(', ')}, ${alpha * 0.065})`)
+  gradient.addColorStop(0.88, `rgba(${color.join(', ')}, ${alpha * 0.018})`)
+  gradient.addColorStop(1, `rgba(${color.join(', ')}, 0)`)
+  context.fillStyle = gradient
+  context.fillRect(
+    Math.max(0, x - radius),
+    Math.max(0, y - radius),
+    Math.min(radius * 2, context.canvas.width - Math.max(0, x - radius)),
+    Math.min(radius * 2, context.canvas.height - Math.max(0, y - radius)),
+  )
+}
+
+function drawAmbientFrame(now) {
+  ambientFrame = requestAnimationFrame(drawAmbientFrame)
+  if (now - ambientLastFrame < 33) return
+
+  const context = ambientContext
+  const canvas = el.ambientCanvas
+  if (!context || !canvas) return
+
+  const elapsed = ambientLastFrame
+    ? Math.min(64, now - ambientLastFrame)
+    : 16
+  ambientLastFrame = now
+  const reduceMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  ).matches
+  const blend = reduceMotion ? 1 : 1 - Math.exp(-elapsed / 1700)
+
+  for (const key of ['a', 'b']) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      ambientPalette.current[key][channel] +=
+        (ambientPalette.target[key][channel] -
+          ambientPalette.current[key][channel]) *
+        blend
+    }
+  }
+
+  const time = reduceMotion ? 0 : now / 1000
+  const width = canvas.width
+  const height = canvas.height
+  const radius = Math.max(width, height)
+  context.clearRect(0, 0, width, height)
+
+  drawAmbientHalo(
+    context,
+    width * (AMBIENT_POSITIONS.a.x + Math.sin(time / 17) * 0.025),
+    height * (AMBIENT_POSITIONS.a.y + Math.cos(time / 23) * 0.018),
+    radius * 0.58,
+    ambientPalette.current.a,
+    0.39,
+  )
+  drawAmbientHalo(
+    context,
+    width * (AMBIENT_POSITIONS.b.x + Math.cos(time / 21) * 0.022),
+    height * (AMBIENT_POSITIONS.b.y + Math.sin(time / 19) * 0.02),
+    radius * 0.62,
+    ambientPalette.current.b,
+    0.29,
+  )
+}
+
+function initializeAmbientCanvas() {
+  if (!el.ambientCanvas || ambientContext) return
+  ambientContext = el.ambientCanvas.getContext('2d', { alpha: true })
+  resizeAmbientCanvas()
+  window.addEventListener('resize', resizeAmbientCanvas)
+  ambientFrame = requestAnimationFrame(drawAmbientFrame)
+}
+
 function transitionAmbientPalette(hue, saturation) {
-  if (!el.ambientScenes.length) return
-  pendingAmbientPalette = { hue, saturation }
-  if (ambientTransitionBusy) return
-  const nextPalette = pendingAmbientPalette
-  pendingAmbientPalette = null
-
-  const nextIndex = ambientSceneIndex === 0 ? 1 : 0
-  const current = el.ambientScenes[ambientSceneIndex]
-  const next = el.ambientScenes[nextIndex]
-  const colorA = hslToRgb(nextPalette.hue, nextPalette.saturation * 0.9, 0.52)
-  const colorB = hslToRgb(nextPalette.hue + 24, nextPalette.saturation * 0.8, 0.43)
-  const colorC = hslToRgb(nextPalette.hue - 20, nextPalette.saturation * 0.65, 0.5)
-
-  next.style.setProperty('--scene-a', colorA.join(', '))
-  next.style.setProperty('--scene-b', colorB.join(', '))
-  next.style.setProperty('--scene-c', colorC.join(', '))
-  next.classList.add('is-active')
-  current.classList.remove('is-active')
-  ambientSceneIndex = nextIndex
-  ambientTransitionBusy = true
-
-  if (ambientTransitionTimer) window.clearTimeout(ambientTransitionTimer)
-  ambientTransitionTimer = window.setTimeout(() => {
-    ambientTransitionBusy = false
-    ambientTransitionTimer = null
-    if (!pendingAmbientPalette) return
-    const pending = pendingAmbientPalette
-    pendingAmbientPalette = null
-    transitionAmbientPalette(pending.hue, pending.saturation)
-  }, 2800)
+  ambientPalette.target.a = hslToRgb(hue, saturation * 0.9, 0.52)
+  ambientPalette.target.b = hslToRgb(hue + 24, saturation * 0.8, 0.43)
 }
 
 function applyPaletteFromColor(r, g, b, { ambient = true } = {}) {
@@ -716,9 +889,8 @@ async function extractPalette(source, token) {
 
 async function updatePalette(cover) {
   const token = ++state.artToken
-  applyFallbackPalette(cover || state.track?.name, { ambient: false })
+  applyFallbackPalette(cover || state.track?.name)
   if (!cover) {
-    applyFallbackPalette(state.track?.name)
     return
   }
 
@@ -847,7 +1019,7 @@ async function playTrackFromList(track, listKey) {
 
 async function extendRoamQueue() {
   if (state.queueMode !== 'roam') return false
-  const freshTracks = await api.getRoam(8)
+  const freshTracks = await api.getRoam(8, state.roamMode, state.roamMood)
   const existing = new Set(state.queue.map((track) => track.id))
   const additions = (freshTracks || []).filter(
     (track) => !existing.has(track.id),
@@ -861,7 +1033,7 @@ async function extendRoamQueue() {
 }
 
 async function loadRoamQueue({ preservePlaying = false } = {}) {
-  const tracks = await api.getRoam(8)
+  const tracks = await api.getRoam(8, state.roamMode, state.roamMood)
   const keepCurrent = preservePlaying && state.playing && state.track
   state.queue = keepCurrent
     ? [state.track, ...tracks.filter((track) => track.id !== state.track.id)]
@@ -873,6 +1045,51 @@ async function loadRoamQueue({ preservePlaying = false } = {}) {
 
   if (state.queue.length && !keepCurrent) {
     await prepareTrack(state.queue[0])
+  }
+}
+
+function updateRoamModeUI() {
+  $$('[data-roam-mode]').forEach((button) => {
+    const active = button.dataset.roamMode === state.roamMode
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-pressed', String(active))
+  })
+  $$('[data-roam-mood]').forEach((button) => {
+    const active = button.dataset.roamMood === state.roamMood
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-pressed', String(active))
+  })
+}
+
+async function setRoamMode(mode) {
+  if (!['continuous', 'explore'].includes(mode) || mode === state.roamMode) {
+    return
+  }
+  const previous = state.roamMode
+  state.roamMode = mode
+  updateRoamModeUI()
+  try {
+    await api.setRoamMode(mode)
+    await loadRoamQueue({ preservePlaying: true })
+  } catch (error) {
+    state.roamMode = previous
+    updateRoamModeUI()
+    throw error
+  }
+}
+
+async function setRoamMood(mood) {
+  if (!mood || mood === state.roamMood) return
+  const previous = state.roamMood
+  state.roamMood = mood
+  updateRoamModeUI()
+  try {
+    await api.setRoamMood(mood)
+    await loadRoamQueue({ preservePlaying: true })
+  } catch (error) {
+    state.roamMood = previous
+    updateRoamModeUI()
+    throw error
   }
 }
 
@@ -963,6 +1180,7 @@ function updateProfileUI() {
   state.profile = state.profiles[state.primaryProvider] || null
   const profile = state.profile
   const avatar = safeArtwork(profile?.avatar)
+  el.app.classList.toggle('is-guest', !profile)
 
   el.profileName.textContent = profile ? profile.name : '登录'
   el.popoverName.textContent = profile ? profile.name : '游客'
@@ -999,20 +1217,24 @@ function updateProfileUI() {
 }
 
 async function refreshLibrary(showLoading = true) {
-  if (showLoading) {
-    el.libraryContent.innerHTML =
-      '<div class="loading-panel"><span></span></div>'
+  if (!state.daily.length && state.queue.length) {
+    state.daily = state.queue.slice(0, 9)
+    state.sources.libraryDaily = state.daily
   }
+  renderLibrary()
 
   try {
-    const library = await api.getLibrary()
+    const library = await api.getLibrary(showLoading)
     state.profiles[state.primaryProvider] =
       library.profile || state.profiles[state.primaryProvider]
     state.daily = library.daily || []
     state.recent = library.recent || []
     state.playlists = library.playlists || []
+    state.likedTracks = library.likedTracks || []
+    state.favoriteAlbums = library.favoriteAlbums || []
     state.sources.libraryDaily = state.daily
     state.sources.libraryRecent = state.recent
+    state.sources.likedTracks = state.likedTracks
     updateProfileUI()
     renderLibrary()
   } catch (error) {
@@ -1029,8 +1251,11 @@ function renderMiniTracks(tracks, listKey) {
         <button class="mini-track" data-track-id="${track.id}" data-list-key="${listKey}">
           ${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : '<span class="song-thumb"></span>'}
           <div>
-            <strong>${escapeHTML(track.name)}</strong>
-            <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
+            <strong class="text-marquee"><span class="marquee-content">${escapeHTML(track.name)}</span></strong>
+            <span class="mini-artist-line">
+              <span class="text-marquee"><span class="marquee-content">${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span></span>
+              ${providerBadge(track.provider)}
+            </span>
           </div>
         </button>
       `,
@@ -1038,13 +1263,50 @@ function renderMiniTracks(tracks, listKey) {
     .join('')
 }
 
-function playlistCards(playlists) {
-  if (!playlists.length) {
+function playlistCards(
+  playlists,
+  { likedTracks = [], albums = [] } = {},
+) {
+  if (!playlists.length && !likedTracks.length && !albums.length) {
     return ''
   }
 
+  const likedCard = likedTracks.length
+    ? `
+      <article class="playlist-card" data-library-liked tabindex="0" role="button">
+        <div class="card-cover">
+          ${likedTracks[0].cover ? `<img src="${escapeHTML(likedTracks[0].cover)}" alt="" loading="lazy" />` : ''}
+          <span class="card-play">${icons.play}</span>
+        </div>
+        <h3 class="text-marquee"><span class="marquee-content">我喜欢</span></h3>
+        <p class="card-subline">
+          <span class="text-marquee"><span class="marquee-content">${likedTracks.length} 首</span></span>
+          ${providerBadge(state.primaryProvider)}
+        </p>
+      </article>
+    `
+    : ''
+  const albumCards = albums
+    .map(
+      (album, index) => `
+        <article class="playlist-card" data-library-album-index="${index}" tabindex="0" role="button">
+          <div class="card-cover">
+            ${album.cover ? `<img src="${escapeHTML(album.cover)}" alt="" loading="lazy" />` : ''}
+            <span class="card-play">${icons.play}</span>
+          </div>
+          <h3 class="text-marquee"><span class="marquee-content">${escapeHTML(album.name)}</span></h3>
+          <p class="card-subline">
+            <span class="text-marquee"><span class="marquee-content">${escapeHTML(album.artist || '专辑')}</span></span>
+            ${providerBadge(album.provider || state.primaryProvider)}
+          </p>
+        </article>
+      `,
+    )
+    .join('')
+
   return `
     <div class="playlist-grid">
+      ${likedCard}
       ${playlists
         .map(
           (playlist) => `
@@ -1053,12 +1315,16 @@ function playlistCards(playlists) {
                 ${playlist.cover ? `<img src="${escapeHTML(playlist.cover)}" alt="" loading="lazy" />` : ''}
                 <span class="card-play">${icons.play}</span>
               </div>
-              <h3>${escapeHTML(playlist.name)}</h3>
-              <p>${escapeHTML(playlist.creator || formatCount(playlist.playCount) || `${playlist.trackCount} 首`)} ${providerBadge(playlist.provider)}</p>
+              <h3 class="text-marquee"><span class="marquee-content">${escapeHTML(playlist.name)}</span></h3>
+              <p class="card-subline">
+                <span class="text-marquee"><span class="marquee-content">${escapeHTML(playlist.creator || formatCount(playlist.playCount) || `${playlist.trackCount} 首`)}</span></span>
+                ${providerBadge(playlist.provider)}
+              </p>
             </article>
           `,
         )
         .join('')}
+      ${albumCards}
     </div>
   `
 }
@@ -1073,14 +1339,21 @@ function renderLibrary() {
       </section>
     `
 
-  const playlistSection = state.profile
+  const collectionCount =
+    state.playlists.length +
+    state.favoriteAlbums.length +
+    (state.likedTracks.length ? 1 : 0)
+  const playlistSection = state.profile && collectionCount
     ? `
       <section class="library-section">
         <div class="section-heading">
           <h2>我的歌单</h2>
-          <span class="section-count">${state.playlists.length} 个收藏</span>
+          <span class="section-count">${collectionCount} 个收藏</span>
         </div>
-        ${playlistCards(state.playlists)}
+        ${playlistCards(state.playlists, {
+          likedTracks: state.likedTracks,
+          albums: state.favoriteAlbums,
+        })}
       </section>
     `
     : ''
@@ -1111,13 +1384,19 @@ function renderLibrary() {
     ${recentSection}
     ${playlistSection}
   `
+  applyStaggeredReveal(el.libraryContent)
 
   $('#login-inline-button')?.addEventListener('click', () =>
     loginProvider(state.primaryProvider),
   )
 }
 
-function renderSongTable(songs, listKey, limit = 40) {
+function renderSongTable(
+  songs,
+  listKey,
+  limit = 40,
+  { albumView = false } = {},
+) {
   if (!songs.length) {
     return '<div class="empty-state"></div>'
   }
@@ -1128,16 +1407,23 @@ function renderSongTable(songs, listKey, limit = 40) {
         .slice(0, limit)
         .map(
           (track, index) => `
-            <button class="song-row ${state.track?.id === track.id ? 'is-current' : ''}" data-track-id="${track.id}" data-list-key="${listKey}">
+            <button class="song-row ${albumView ? 'is-album-track' : ''} ${state.track?.id === track.id ? 'is-current' : ''}" data-track-id="${track.id}" data-list-key="${listKey}">
               <span class="song-number">${String(index + 1).padStart(2, '0')}</span>
               <span class="song-title-cell">
                 <span class="song-thumb">${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : ''}</span>
                 <span class="song-copy">
-                  <strong>${escapeHTML(track.name)}</strong>
-                  <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
+                  <strong class="text-marquee"><span class="marquee-content">${escapeHTML(track.name)}</span></strong>
+                  <span class="song-artist-line">
+                    <span class="text-marquee"><span class="marquee-content">${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span></span>
+                    ${providerBadge(track.provider)}
+                  </span>
                 </span>
               </span>
-              <span class="song-album-cell">${escapeHTML(track.album || '')}</span>
+              ${
+                albumView
+                  ? ''
+                  : `<span class="song-album-cell"><span class="text-marquee"><span class="marquee-content">${escapeHTML(track.album || '')}</span></span></span>`
+              }
               <span class="song-duration">${formatTime(track.duration / 1000)}</span>
             </button>
           `,
@@ -1153,7 +1439,7 @@ async function performSearch(query) {
   const token = ++state.searchToken
   el.searchInput.value = keyword
   el.searchResults.innerHTML =
-    '<div class="loading-panel"><span></span></div>'
+    '<div class="content-pending"></div>'
 
   try {
     const result = await api.search(keyword)
@@ -1182,6 +1468,7 @@ async function performSearch(query) {
           : ''
       }
     `
+    applyStaggeredReveal(el.searchResults)
   } catch (error) {
     if (token !== state.searchToken) return
     el.searchResults.innerHTML = '<div class="empty-state"></div>'
@@ -1197,6 +1484,7 @@ function setView(view, { returnView } = {}) {
   $$('.view').forEach((element) => {
     element.classList.toggle('is-active', element.dataset.view === view)
   })
+  requestAnimationFrame(() => refreshTextMarquees())
 
   const navView = view === 'playlist' ? state.returnView : view
   $$('.nav-button').forEach((button) => {
@@ -1213,7 +1501,7 @@ async function openPlaylist(playlistId) {
   const previousView = state.currentView === 'playlist' ? state.returnView : state.currentView
   setView('playlist', { returnView: previousView })
   el.playlistContent.innerHTML =
-    '<div class="loading-panel"><span></span></div>'
+    '<div class="content-pending"></div>'
 
   try {
     const playlist = await api.getPlaylist(playlistId)
@@ -1226,31 +1514,215 @@ async function openPlaylist(playlistId) {
   }
 }
 
+function openLikedTracks() {
+  if (!state.likedTracks.length) return
+  const previousView =
+    state.currentView === 'playlist' ? state.returnView : state.currentView
+  setView('playlist', { returnView: previousView })
+  const playlist = {
+    id: `${state.primaryProvider}:liked`,
+    kind: 'playlist',
+    provider: state.primaryProvider,
+    name: '我喜欢',
+    cover: state.likedTracks[0].cover || '',
+    creator: PROVIDER_LABELS[state.primaryProvider],
+    trackCount: state.likedTracks.length,
+    tracks: state.likedTracks,
+  }
+  state.activePlaylist = playlist
+  state.sources.playlist = playlist.tracks
+  renderPlaylist(playlist)
+}
+
+async function openAlbum(track = state.track) {
+  if (!track?.album) return
+  const previousView =
+    state.currentView === 'playlist' ? state.returnView : state.currentView
+  setView('playlist', { returnView: previousView })
+  el.playlistContent.innerHTML =
+    '<div class="content-pending"></div>'
+
+  try {
+    const album = await api.getAlbum(track)
+    state.activePlaylist = album
+    state.sources.playlist = album.tracks
+    renderPlaylist(album)
+  } catch (error) {
+    el.playlistContent.innerHTML = '<div class="empty-state"></div>'
+    showToast(friendlyError(error))
+  }
+}
+
+async function openArtist(track = state.track) {
+  if (!track?.artists?.length) return
+  const previousView =
+    state.currentView === 'playlist' ? state.returnView : state.currentView
+  setView('playlist', { returnView: previousView })
+  el.playlistContent.innerHTML =
+    '<div class="content-pending"></div>'
+
+  try {
+    const artist = await api.getArtist(track)
+    state.sources.artist = artist.tracks
+    renderArtist(artist)
+  } catch (error) {
+    el.playlistContent.innerHTML = '<div class="empty-state"></div>'
+    showToast(friendlyError(error))
+  }
+}
+
+function artistAlbumCards(albums) {
+  if (!albums.length) return '<div class="empty-state"></div>'
+  return albums
+    .map(
+      (album, index) => `
+        <button class="album-card" data-artist-album-index="${index}">
+          <span class="album-card-cover">
+            ${album.cover ? `<img src="${escapeHTML(album.cover)}" alt="" loading="lazy" />` : ''}
+          </span>
+          <strong class="text-marquee"><span class="marquee-content">${escapeHTML(album.name)}</span></strong>
+        </button>
+      `,
+    )
+    .join('')
+}
+
+async function loadArtistAlbums(artist) {
+  try {
+    const albums = await api.getArtistAlbums(artist)
+    if (!albums.length) return
+    artist.albums = albums
+    const grid = el.playlistContent.querySelector('.album-grid')
+    if (grid?.dataset.artistId === artist.id) {
+      grid.innerHTML = artistAlbumCards(albums)
+      applyStaggeredReveal(grid)
+    }
+  } catch {
+    // The artist profile and hot songs remain usable if albums fail.
+  }
+}
+
+function renderArtist(artist) {
+  const followed = Boolean(state.followedArtists[artist.id])
+  const albums = artist.albums || []
+  el.playlistContent.innerHTML = `
+    <header class="artist-hero">
+      <div class="artist-portrait">
+        ${artist.avatar ? `<img src="${escapeHTML(artist.avatar)}" alt="" />` : icons.user}
+      </div>
+      <div class="artist-meta">
+        <h1 class="text-marquee"><span class="marquee-content">${escapeHTML(artist.name)}</span></h1>
+        ${artist.bio ? `<p class="artist-bio">${escapeHTML(artist.bio)}</p>` : ''}
+        <div class="playlist-actions">
+          <button class="content-action ${followed ? 'is-active' : ''}" id="artist-follow-button">
+            ${followed ? '已关注' : '关注'}
+          </button>
+        </div>
+      </div>
+    </header>
+    <section class="detail-section">
+      <div class="section-heading">
+        <h2>热门歌曲</h2>
+      </div>
+      ${renderSongTable(artist.tracks, 'artist', 10, { albumView: true })}
+    </section>
+    <section class="detail-section">
+      <div class="section-heading">
+        <h2>专辑</h2>
+      </div>
+      <div class="album-grid" data-artist-id="${escapeHTML(artist.id)}">
+        ${artistAlbumCards(albums)}
+      </div>
+    </section>
+  `
+  applyStaggeredReveal(el.playlistContent)
+
+  $('#artist-follow-button').addEventListener('click', async (event) => {
+    const next = !state.followedArtists[artist.id]
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await api.followArtist(artist, next)
+      state.followedArtists[artist.id] = next
+      button.classList.toggle('is-active', next)
+      button.textContent = next ? '已关注' : '关注'
+    } catch (error) {
+      showToast(friendlyError(error))
+    } finally {
+      button.disabled = false
+    }
+  })
+  el.playlistContent.querySelector('.album-grid')?.addEventListener('click', (event) => {
+    const card = event.target.closest('[data-artist-album-index]')
+    if (!card) return
+    const album = artist.albums?.[Number(card.dataset.artistAlbumIndex)]
+    if (album?.sampleTrack) openAlbum(album.sampleTrack)
+  })
+  loadArtistAlbums(artist)
+}
+
 function renderPlaylist(playlist) {
+  const isAlbum = playlist.kind === 'album'
+  const subscribed = Boolean(state.subscribedAlbums[playlist.id])
   el.playlistContent.innerHTML = `
     <header class="playlist-hero">
       <div class="playlist-art">
         ${playlist.cover ? `<img src="${escapeHTML(playlist.cover)}" alt="" />` : ''}
       </div>
       <div class="playlist-meta">
-        <h1>${escapeHTML(playlist.name)}</h1>
+        <h1 class="text-marquee"><span class="marquee-content">${escapeHTML(playlist.name)}</span></h1>
         ${playlist.description ? `<p class="playlist-description">${escapeHTML(playlist.description)}</p>` : ''}
-        <div class="playlist-facts">
-          ${playlist.creator ? `<span>${escapeHTML(playlist.creator)}</span><i></i>` : ''}
-          <span>${playlist.trackCount || playlist.tracks.length} 首</span>
-          ${playlist.playCount ? `<i></i><span>${formatCount(playlist.playCount)} 次播放</span>` : ''}
-        </div>
+        ${
+          isAlbum
+            ? playlist.creator
+              ? `<div class="playlist-facts"><span>${escapeHTML(playlist.creator)}</span></div>`
+              : ''
+            : `
+              <div class="playlist-facts">
+                ${playlist.creator ? `<span>${escapeHTML(playlist.creator)}</span><i></i>` : ''}
+                <span>${playlist.trackCount || playlist.tracks.length} 首</span>
+                ${playlist.playCount ? `<i></i><span>${formatCount(playlist.playCount)} 次播放</span>` : ''}
+              </div>
+            `
+        }
         <div class="playlist-actions">
-          <button class="primary-button" id="playlist-play-button">${icons.play}播放全部</button>
+          ${
+            isAlbum
+              ? `<button class="content-action ${subscribed ? 'is-active' : ''}" id="album-subscribe-button">
+                  ${subscribed ? '已订阅' : '订阅'}
+                </button>`
+              : `<button class="primary-button" id="playlist-play-button">${icons.play}播放全部</button>`
+          }
         </div>
       </div>
     </header>
-    ${renderSongTable(playlist.tracks, 'playlist', 1000)}
+    ${renderSongTable(playlist.tracks, 'playlist', 1000, {
+      albumView: isAlbum,
+    })}
   `
+  applyStaggeredReveal(el.playlistContent)
 
-  $('#playlist-play-button').addEventListener('click', () => {
-    if (playlist.tracks[0]) playTrackFromList(playlist.tracks[0], 'playlist')
-  })
+  if (isAlbum) {
+    $('#album-subscribe-button').addEventListener('click', async (event) => {
+      const next = !state.subscribedAlbums[playlist.id]
+      const button = event.currentTarget
+      button.disabled = true
+      try {
+        await api.subscribeAlbum(playlist, next)
+        state.subscribedAlbums[playlist.id] = next
+        button.classList.toggle('is-active', next)
+        button.textContent = next ? '已订阅' : '订阅'
+      } catch (error) {
+        showToast(friendlyError(error))
+      } finally {
+        button.disabled = false
+      }
+    })
+  } else {
+    $('#playlist-play-button').addEventListener('click', () => {
+      if (playlist.tracks[0]) playTrackFromList(playlist.tracks[0], 'playlist')
+    })
+  }
 }
 
 function queueItem(track, index) {
@@ -1259,8 +1731,11 @@ function queueItem(track, index) {
       <span class="queue-index">${state.track?.id === track.id ? '●' : String(index + 1).padStart(2, '0')}</span>
       ${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" loading="lazy" />` : '<span class="song-thumb"></span>'}
       <span class="queue-copy">
-        <strong>${escapeHTML(track.name)}</strong>
-        <span>${escapeHTML(track.artists?.join(' / ') || '未知歌手')} ${providerBadge(track.provider)}</span>
+        <strong class="text-marquee"><span class="marquee-content">${escapeHTML(track.name)}</span></strong>
+        <span class="queue-artist-line">
+          <span class="text-marquee"><span class="marquee-content">${escapeHTML(track.artists?.join(' / ') || '未知歌手')}</span></span>
+          ${providerBadge(track.provider)}
+        </span>
       </span>
       <span class="queue-time">${formatTime(track.duration / 1000)}</span>
     </button>
@@ -1277,6 +1752,7 @@ function renderQueue() {
     state.queue.reduce((total, track) => total + (track.duration || 0) / 1000, 0),
   )
   el.queueList.innerHTML = state.queue.map(queueItem).join('')
+  applyStaggeredReveal(el.queueList)
   el.queueEmpty.classList.toggle('is-visible', state.queue.length === 0)
 }
 
@@ -1285,29 +1761,31 @@ function setTrackMenuOpen(open) {
     setEqualizerOpen(false)
     setQueueOpen(false)
     setProfileOpen(false)
-    el.trackMenu.classList.add('is-open')
-    el.trackMenu.setAttribute('aria-hidden', 'false')
     el.trackMore.setAttribute('aria-expanded', 'true')
 
     const anchor = el.trackMore.getBoundingClientRect()
     const menuWidth = el.trackMenu.offsetWidth
-    const menuHeight = el.trackMenu.offsetHeight
     const margin = 12
     const gap = 8
     const left = Math.max(
       margin,
       Math.min(
-        anchor.right - menuWidth,
+        anchor.left,
         window.innerWidth - menuWidth - margin,
       ),
     )
     const preferredTop = anchor.bottom + gap
-    const top =
-      preferredTop + menuHeight <= window.innerHeight - margin
-        ? preferredTop
-        : Math.max(margin, anchor.top - menuHeight - gap)
+    const availableBelow = window.innerHeight - preferredTop - margin
+    el.trackMenu.style.maxHeight =
+      `${Math.max(160, Math.min(360, availableBelow))}px`
     el.trackMenu.style.left = `${Math.round(left)}px`
-    el.trackMenu.style.top = `${Math.round(top)}px`
+    el.trackMenu.style.top = `${Math.round(preferredTop)}px`
+    el.trackMenu.setAttribute('aria-hidden', 'false')
+    requestAnimationFrame(() => {
+      if (el.trackMore.getAttribute('aria-expanded') === 'true') {
+        el.trackMenu.classList.add('is-open')
+      }
+    })
     return
   }
 
@@ -1476,7 +1954,7 @@ async function startProviderQrLogin(provider = state.loginQrProvider) {
             `已登录${PROVIDER_LABELS[provider]}：${status.profile.name || ''}`,
           )
           if (state.primaryProvider === provider) {
-            refreshLibrary(false)
+            refreshLibrary(true)
             loadRoamQueue({ preservePlaying: true }).catch(() => {})
           }
           return
@@ -1527,7 +2005,7 @@ async function loginProvider(provider = state.primaryProvider) {
     updateProfileUI()
     showToast(`已登录网易云音乐：${result.profile?.name || ''}`)
     if (state.primaryProvider === 'netease') {
-      refreshLibrary(false)
+      refreshLibrary(true)
       loadRoamQueue({ preservePlaying: true }).catch((error) => {
         showToast(friendlyError(error))
       })
@@ -1545,7 +2023,7 @@ async function setPrimaryProvider(provider) {
     state.profiles = result.profiles
     updateProfileUI()
     await Promise.all([
-      refreshLibrary(false),
+      refreshLibrary(true),
       loadRoamQueue({ preservePlaying: true }),
     ])
   } catch (error) {
@@ -1567,7 +2045,6 @@ async function toggleLike() {
 
   try {
     await api.setLike(state.track, state.liked)
-    showToast(state.liked ? '已经放进了喜欢的音乐' : '已从喜欢的音乐中移除')
   } catch (error) {
     state.liked = previous
     el.likeButton.classList.toggle('is-active', previous)
@@ -1594,6 +2071,21 @@ function cycleRepeatMode() {
 }
 
 function bindEvents() {
+  document.addEventListener(
+    'load',
+    (event) => {
+      const image = event.target
+      if (
+        image?.tagName === 'IMG' &&
+        image.matches(
+          '.card-cover img, .album-card-cover img, .song-thumb img, .mini-track img, .queue-item img',
+        )
+      ) {
+        image.classList.add('media-loaded')
+      }
+    },
+    true,
+  )
   document.addEventListener('pointerover', (event) => {
     const target = event.target.closest?.('[data-tooltip]')
     if (target && target !== tooltipTarget) scheduleTooltip(target)
@@ -1618,10 +2110,12 @@ function bindEvents() {
     hideTooltip()
     setTrackMenuOpen(false)
     updateTrackTitleMotion()
+    refreshTextMarquees()
   })
   document.addEventListener(
     'scroll',
-    () => {
+    (event) => {
+      if (el.trackMenu.contains(event.target)) return
       hideTooltip()
       setTrackMenuOpen(false)
     },
@@ -1639,6 +2133,20 @@ function bindEvents() {
   $$('.nav-button').forEach((button) => {
     button.addEventListener('click', () => setView(button.dataset.nav))
   })
+  $$('[data-roam-mode]').forEach((button) => {
+    button.addEventListener('click', () =>
+      setRoamMode(button.dataset.roamMode).catch((error) => {
+        showToast(friendlyError(error))
+      }),
+    )
+  })
+  $$('[data-roam-mood]').forEach((button) => {
+    button.addEventListener('click', () =>
+      setRoamMood(button.dataset.roamMood).catch((error) => {
+        showToast(friendlyError(error))
+      }),
+    )
+  })
 
   $('#top-search-button').addEventListener('click', () => setView('search'))
   el.playButton.addEventListener('click', togglePlayback)
@@ -1651,6 +2159,8 @@ function bindEvents() {
     showToast(state.shuffle ? '随机播放已开启' : '随机播放已关闭')
   })
   el.repeatButton.addEventListener('click', cycleRepeatMode)
+  el.trackArtist.addEventListener('click', () => openArtist(state.track))
+  el.trackAlbum.addEventListener('click', () => openAlbum(state.track))
   el.trackMore.addEventListener('click', (event) => {
     event.stopPropagation()
     setTrackMenuOpen(!el.trackMenu.classList.contains('is-open'))
@@ -1795,10 +2305,12 @@ function bindEvents() {
       state.profiles[provider] = null
       state.recent = []
       state.playlists = []
+      state.likedTracks = []
+      state.favoriteAlbums = []
       updateProfileUI()
       setProfileOpen(false)
       showToast(`已退出${PROVIDER_LABELS[provider]}账号`)
-      refreshLibrary(false)
+      refreshLibrary(true)
       loadRoamQueue({ preservePlaying: true }).catch(() => {})
     } catch (error) {
       showToast(friendlyError(error))
@@ -1827,10 +2339,45 @@ function bindEvents() {
       return
     }
 
+    if (event.target.closest('[data-library-liked]')) {
+      openLikedTracks()
+      return
+    }
+
+    const libraryAlbum = event.target.closest('[data-library-album-index]')
+    if (libraryAlbum) {
+      const album =
+        state.favoriteAlbums[Number(libraryAlbum.dataset.libraryAlbumIndex)]
+      if (album?.sampleTrack) openAlbum(album.sampleTrack)
+      return
+    }
+
     const playlistElement = event.target.closest('[data-playlist-id]')
     if (playlistElement) openPlaylist(String(playlistElement.dataset.playlistId))
   })
   $('.main-content').addEventListener('keydown', (event) => {
+    if (
+      event.key === 'Enter' ||
+      event.key === ' '
+    ) {
+      if (event.target.closest('[data-library-liked]')) {
+        event.preventDefault()
+        openLikedTracks()
+        return
+      }
+      const libraryAlbum = event.target.closest(
+        '[data-library-album-index]',
+      )
+      if (libraryAlbum) {
+        event.preventDefault()
+        const album =
+          state.favoriteAlbums[
+            Number(libraryAlbum.dataset.libraryAlbumIndex)
+          ]
+        if (album?.sampleTrack) openAlbum(album.sampleTrack)
+        return
+      }
+    }
     const playlistElement = event.target.closest('[data-playlist-id]')
     if (playlistElement && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault()
@@ -1875,6 +2422,8 @@ function bindEvents() {
 
 async function initialize() {
   bindEvents()
+  initializeAmbientCanvas()
+  initializeTextMarquees()
   updatePlayButton()
   updateProfileUI()
   renderEqualizerBands()
@@ -1892,6 +2441,9 @@ async function initialize() {
     }
     state.primaryProvider = bootstrap.primaryProvider || 'netease'
     state.secondaryEnabled = bootstrap.secondaryEnabled !== false
+    state.roamMode =
+      bootstrap.roamMode === 'explore' ? 'explore' : 'continuous'
+    state.roamMood = bootstrap.roamMood || 'random'
     state.profile = state.profiles[state.primaryProvider] || null
     state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
     state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
@@ -1907,6 +2459,7 @@ async function initialize() {
     updateProfileUI()
     renderEqualizerBands()
     updateQualityMenuSelection()
+    updateRoamModeUI()
     state.queue = bootstrap.roam || []
     state.queueMode = 'roam'
     state.sources.roam = state.queue
@@ -1919,6 +2472,7 @@ async function initialize() {
       resetLyrics('')
     }
     renderQueue()
+    refreshLibrary(false).catch(() => {})
   } catch (error) {
     updateTrackUI(null)
     resetLyrics('')

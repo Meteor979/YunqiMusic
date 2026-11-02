@@ -5,10 +5,21 @@ const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args)
 contextBridge.exposeInMainWorld('yunqi', {
   bootstrap: () => invoke('app:bootstrap'),
   getDaily: () => invoke('music:daily'),
-  getRoam: (limit) => invoke('music:roam', limit),
-  getLibrary: () => invoke('music:library'),
+  getRoam: (limit, mode, mood) => invoke('music:roam', limit, mode, mood),
+  setRoamMode: (mode) => invoke('music:set-roam-mode', mode),
+  setRoamMood: (mood) => invoke('music:set-roam-mood', mood),
+  getLibrary: (force = false) => invoke('music:library', force),
   search: (query) => invoke('music:search', query),
   getPlaylist: (id) => invoke('music:playlist', id),
+  getAlbum: (track) => invoke('music:album', track),
+  getArtist: (track) => invoke('music:artist', track),
+  prefetchTrackContext: (track) =>
+    invoke('music:prefetch-track-context', track),
+  getArtistAlbums: (artist) => invoke('music:artist-albums', artist),
+  followArtist: (artist, follow) =>
+    invoke('music:follow-artist', artist, follow),
+  subscribeAlbum: (album, subscribed) =>
+    invoke('music:subscribe-album', album, subscribed),
   getSongUrl: (track, qualityLevel) =>
     invoke('music:url', track, qualityLevel),
   getLyric: (track) => invoke('music:lyric', track),

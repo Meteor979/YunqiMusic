@@ -12,9 +12,14 @@ function normalizeQqSong(raw = {}) {
   const mid = String(raw.mid || raw.songmid || '').trim()
   if (!mid) return null
   const album = raw.album || {}
-  const singers = Array.isArray(raw.singer)
-    ? raw.singer.map((artist) => artist.name || artist.title).filter(Boolean)
-    : []
+  const singerList = Array.isArray(raw.singer) ? raw.singer : []
+  const singers = singerList
+    .map((artist) => artist.name || artist.title)
+    .filter(Boolean)
+  const artistIds = singerList
+    .map((artist) => artist.mid || artist.singer_mid || artist.id)
+    .filter(Boolean)
+    .map(String)
 
   return {
     id: `qq:${mid}`,
@@ -30,6 +35,7 @@ function normalizeQqSong(raw = {}) {
     },
     name: stripTags(raw.name || raw.title || raw.songname || '未知歌曲'),
     artists: singers,
+    artistIds,
     album: stripTags(album.name || raw.albumname || ''),
     cover: coverUrl(album.mid),
     duration: Number(raw.interval || raw.duration || 0) * 1000,
@@ -98,6 +104,65 @@ function createQqAdapter({ getCookie, setCookie }) {
           account.vipStatus !== 'nonVip' &&
           account.vipStatus !== 'unknown',
         vipType: account.vipLevel || account.vipTier || 0,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  async function getArtist(track) {
+    const artistId = String(
+      track.artistIds?.[0] || track.providerData?.artistId || '',
+    )
+    if (!artistId) return null
+    try {
+      const qq = await api()
+      const [detail, songsResponse] = await Promise.all([
+        qq.artist_detail({ id: artistId, cookie: accountCookie() }),
+        qq.artist_songs({
+          id: artistId,
+          limit: 40,
+          order: 'hot',
+          cookie: accountCookie(),
+        }),
+      ])
+      const detailData = detail.body?.data || {}
+      const artist =
+        detailData.singer ||
+        detailData.singer_info ||
+        detailData.data?.singer ||
+        detailData.data?.singer_info ||
+        {}
+      const songsData = songsResponse.body?.data || {}
+      const rawSongs =
+        songsData.songlist ||
+        songsData.song_list ||
+        songsData.singer?.songlist ||
+        songsData.data?.songlist ||
+        []
+      const tracks = rawSongs.map(normalizeQqSong).filter(Boolean)
+      return {
+        id: `qq:artist:${artistId}`,
+        kind: 'artist',
+        provider: 'qq',
+        providerId: artistId,
+        name: stripTags(artist.name || artist.title || track.artists?.[0]),
+        avatar: String(
+          artist.pic || artist.avatar || artist.singer_pic || '',
+        ).replace(/^http:\/\//i, 'https://'),
+        bio: stripTags(
+          artist.briefDesc ||
+            artist.desc ||
+            artist.description ||
+            artist.wiki?.desc ||
+            '',
+        ),
+        albumCount: Number(artist.albumNum || artist.album_count || 0),
+        trackCount: Number(artist.songNum || artist.song_count || tracks.length),
+        followerCount: Number(
+          artist.fansNum || artist.fans_count || artist.follow_num || 0,
+        ),
+        tracks,
       }
     } catch {
       return null
@@ -274,11 +339,21 @@ function createQqAdapter({ getCookie, setCookie }) {
       recommendResponse?.body?.songs ||
       recommendResponse?.body?.data?.songlist ||
       []
+    const playlists = rawPlaylists.map(normalizeQqPlaylist).filter(Boolean)
+    const likedPlaylist = playlists.find((playlist) =>
+      /我喜欢|喜欢的音乐|默认收藏/.test(playlist.name),
+    )
+    const likedTracks = likedPlaylist
+      ? await getPlaylist(likedPlaylist.providerId)
+          .then((playlist) => playlist?.tracks || [])
+          .catch(() => [])
+      : []
     return {
       profile,
-      playlists: rawPlaylists.map(normalizeQqPlaylist).filter(Boolean),
+      playlists,
       recent: [],
       daily: daily.map(normalizeQqSong).filter(Boolean),
+      likedTracks,
     }
   }
 
@@ -318,6 +393,7 @@ function createQqAdapter({ getCookie, setCookie }) {
 
   return {
     getProfile,
+    getArtist,
     search,
     searchPlaylists,
     roam,

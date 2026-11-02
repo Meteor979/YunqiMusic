@@ -282,12 +282,13 @@ function createQishuiAdapter({
     if (!profile) {
       return { profile: null, playlists: [], recent: [], daily: [] }
     }
-    const [playlistData, recentData, feedData] = await Promise.all([
+    const [playlistData, recentData, feedData, likedData] = await Promise.all([
       request('user_playlists', { limit: 100 }).catch(() => ({ items: [] })),
       request('recent_played', { limit: 20 }).catch(() => ({ items: [] })),
       request('feed', { preference: 'familiar', limit: 20 }).catch(() => ({
         items: [],
       })),
+      request('liked_songs').catch(() => ({ items: [] })),
     ])
     const playlists = (playlistData.items || [])
       .map(normalizeQishuiPlaylist)
@@ -300,6 +301,9 @@ function createQishuiAdapter({
         .map(normalizeQishuiSong)
         .filter(Boolean),
       daily: (feedData.items || [])
+        .map(normalizeQishuiSong)
+        .filter(Boolean),
+      likedTracks: (likedData.items || [])
         .map(normalizeQishuiSong)
         .filter(Boolean),
     }

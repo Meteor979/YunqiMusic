@@ -85,16 +85,7 @@
 
     <div class="app-shell" id="app">
       <div class="ambient-field" aria-hidden="true">
-        <div class="ambient-scene is-active" data-ambient-scene="0">
-          <i class="ambient-blob blob-a"></i>
-          <i class="ambient-blob blob-b"></i>
-          <i class="ambient-blob blob-c"></i>
-        </div>
-        <div class="ambient-scene" data-ambient-scene="1">
-          <i class="ambient-blob blob-a"></i>
-          <i class="ambient-blob blob-b"></i>
-          <i class="ambient-blob blob-c"></i>
-        </div>
+        <canvas class="ambient-canvas" id="ambient-canvas"></canvas>
       </div>
       <div class="noise"></div>
 
@@ -106,7 +97,7 @@
             </span>
           </div>
           <span class="titlebar-separator"></span>
-          <span class="titlebar-now" id="titlebar-now">漫游</span>
+          <span class="titlebar-now text-marquee"><span class="marquee-content" id="titlebar-now">漫游</span></span>
         </div>
 
         <div class="titlebar-actions">
@@ -138,11 +129,6 @@
               <span class="nav-icon"><svg><use href="#icon-library"></use></svg></span>
             </button>
           </div>
-          <div class="rail-bottom">
-            <button class="rail-orb" id="queue-toggle" data-tooltip="播放队列" data-tooltip-placement="right" aria-label="播放队列">
-              <svg><use href="#icon-queue"></use></svg>
-            </button>
-          </div>
         </nav>
 
         <main class="main-content" id="main-content">
@@ -161,7 +147,7 @@
                   </div>
                   <div class="cover-frame">
                     <img id="album-cover" alt="" />
-                    <div class="cover-placeholder"><span>YQ</span></div>
+                    <div class="cover-placeholder"></div>
                   </div>
                   <div class="cover-shadow"></div>
                 </div>
@@ -172,13 +158,24 @@
                       <div class="track-title-viewport" id="track-title-viewport">
                         <h2 id="track-name"></h2>
                       </div>
-                      <p id="track-artist"></p>
+                      <button class="track-artist" id="track-artist" type="button" data-tooltip="打开歌手" aria-label="打开歌手" disabled>
+                        <span class="text-marquee" id="track-artist-marquee"><span class="marquee-content" id="track-artist-name"></span></span>
+                        <svg aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                      </button>
                     </div>
-                    <button class="icon-button" id="track-more" data-tooltip="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false">
-                      <svg><use href="#icon-more"></use></svg>
-                    </button>
+                    <div class="track-actions">
+                      <button class="icon-button" id="track-more" data-tooltip="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false">
+                        <svg><use href="#icon-more"></use></svg>
+                      </button>
+                      <button class="utility-button" id="like-button" data-tooltip="喜欢" aria-label="喜欢">
+                        <svg><use href="#icon-heart"></use></svg>
+                      </button>
+                    </div>
                   </div>
-                  <p class="album-name" id="track-album"></p>
+                  <button class="album-name" id="track-album" type="button" data-tooltip="打开专辑" aria-label="打开专辑" disabled>
+                    <span class="text-marquee" id="track-album-marquee"><span class="marquee-content" id="track-album-name"></span></span>
+                    <svg aria-hidden="true"><use href="#icon-chevron"></use></svg>
+                  </button>
                 </div>
 
                 <div class="timeline">
@@ -208,8 +205,8 @@
                 </div>
 
                 <div class="utility-row">
-                  <button class="utility-button" id="like-button" data-tooltip="喜欢" aria-label="喜欢">
-                    <svg><use href="#icon-heart"></use></svg>
+                  <button class="utility-button" id="queue-toggle" data-tooltip="播放队列" aria-label="播放队列">
+                    <svg><use href="#icon-queue"></use></svg>
                   </button>
                   <button class="utility-button" id="equalizer-button" data-tooltip="均衡器" aria-label="均衡器">
                     <svg><use href="#icon-equalizer"></use></svg>
@@ -266,7 +263,7 @@
               <button class="outline-button" id="library-refresh-button">刷新</button>
             </div>
             <div id="library-content" class="library-content">
-              <div class="loading-panel"><span></span></div>
+              <div class="content-pending"></div>
             </div>
           </section>
 
@@ -402,6 +399,21 @@
         <button class="track-menu-option" data-quality-level="standard" role="menuitemradio" aria-checked="false">
           <span>标准</span>
         </button>
+        <div class="track-menu-divider"></div>
+        <div class="track-menu-label">漫游</div>
+        <div class="roam-menu-modes" role="group" aria-label="漫游方式">
+          <button class="is-active" data-roam-mode="continuous" aria-pressed="true">持续</button>
+          <button data-roam-mode="explore" aria-pressed="false">探索</button>
+        </div>
+        <div class="roam-menu-moods" role="group" aria-label="漫游氛围">
+          <button data-roam-mood="calm" aria-pressed="false">舒缓</button>
+          <button data-roam-mood="cafe" aria-pressed="false">咖啡屋</button>
+          <button data-roam-mood="jazz" aria-pressed="false">爵士</button>
+          <button data-roam-mood="night" aria-pressed="false">深夜</button>
+          <button data-roam-mood="rain" aria-pressed="false">雨天</button>
+          <button data-roam-mood="electronic" aria-pressed="false">轻电子</button>
+          <button class="is-active" data-roam-mood="random" aria-pressed="true">随机</button>
+        </div>
       </section>
 
       <dialog class="login-dialog" id="provider-login-dialog">
