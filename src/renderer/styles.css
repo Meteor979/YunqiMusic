@@ -2132,7 +2132,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
 .primary-platform-switch {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   padding: 3px;
   border-radius: 9px;

@@ -11,6 +11,7 @@ const state = {
     netease: null,
     kugou: null,
     qq: null,
+    qishui: null,
   },
   primaryProvider: 'netease',
   secondaryEnabled: true,
@@ -114,6 +115,7 @@ const PROVIDER_LABELS = {
   netease: '网易云',
   kugou: '酷狗',
   qq: 'QQ 音乐',
+  qishui: '汽水音乐',
 }
 
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -922,7 +924,7 @@ function updateProfileUI() {
     )
   })
 
-  for (const provider of ['netease', 'kugou', 'qq']) {
+  for (const provider of ['netease', 'kugou', 'qq', 'qishui']) {
     const account = state.profiles[provider]
     const button = $(`[data-login-provider="${provider}"]`)
     const status = button?.querySelector('small')
@@ -1298,7 +1300,7 @@ function closeProviderLoginDialog() {
 }
 
 async function startProviderQrLogin(provider = state.loginQrProvider) {
-  if (!['kugou', 'qq'].includes(provider)) return
+  if (!['kugou', 'qq', 'qishui'].includes(provider)) return
   state.loginQrProvider = provider
   closeProviderQrTimer()
   el.providerLoginTitle.textContent = `${PROVIDER_LABELS[provider]}登录`
@@ -1310,7 +1312,9 @@ async function startProviderQrLogin(provider = state.loginQrProvider) {
     const result =
       provider === 'kugou'
         ? await api.startKugouQrLogin()
-        : await api.startQqQrLogin()
+        : provider === 'qq'
+          ? await api.startQqQrLogin()
+          : await api.startQishuiQrLogin()
     el.providerLoginQr.src = result.image
     el.providerLoginLoading.hidden = true
     el.providerLoginStatus.textContent = '等待扫码'
@@ -1322,7 +1326,9 @@ async function startProviderQrLogin(provider = state.loginQrProvider) {
         const status =
           provider === 'kugou'
             ? await api.checkKugouQrLogin()
-            : await api.checkQqQrLogin()
+            : provider === 'qq'
+              ? await api.checkQqQrLogin()
+              : await api.checkQishuiQrLogin()
         const success =
           provider === 'kugou' ? status.code === 4 : status.code === 200
         if (success && status.profile) {
@@ -1366,7 +1372,7 @@ async function openProviderLoginDialog(provider) {
 
 async function loginProvider(provider = state.primaryProvider) {
   setProfileOpen(false)
-  if (provider === 'kugou' || provider === 'qq') {
+  if (['kugou', 'qq', 'qishui'].includes(provider)) {
     await openProviderLoginDialog(provider)
     return
   }
@@ -1714,6 +1720,7 @@ async function initialize() {
       netease: null,
       kugou: null,
       qq: null,
+      qishui: null,
       ...(bootstrap.profiles || {}),
     }
     state.primaryProvider = bootstrap.primaryProvider || 'netease'

@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.4.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,6 +21,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.version }}".Trim().TrimStart("v")
+          } else {
+            $env:GITHUB_REF_NAME.TrimStart("v")
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid release version: $version"
+          }
+          $package = Get-Content "package.json" -Raw | ConvertFrom-Json
+          $package.version = $version
+          $package |
+            ConvertTo-Json -Depth 20 |
+            Set-Content "package.json" -Encoding utf8
+          "RELEASE_TAG=v$version" >> $env:GITHUB_ENV
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -48,8 +72,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create $env:GITHUB_REF_NAME `
+          gh release create $env:RELEASE_TAG `
             release/app.asar `
             release/update.json `
-            --title "云栖音乐 $env:GITHUB_REF_NAME" `
+            --target "${{ github.sha }}" `
+            --title "云栖音乐 $env:RELEASE_TAG" `
             --generate-notes

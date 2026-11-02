@@ -26,6 +26,9 @@ importers:
       pako:
         specifier: ^2.1.0
         version: 2.2.0
+      qishui-music-api:
+        specifier: 0.2.2
+        version: 0.2.2
       qqmusic-api-enhanced:
         specifier: 1.0.8
         version: 1.0.8
@@ -1161,6 +1164,10 @@ packages:
   pvutils@1.2.0:
     resolution: {integrity: sha512-BbubeCEyTuQjVMakvJQ/Sxbc93F2pwmbsxONT/ZRrwU7Ua38d8unYTwXpTVLAKJ4BDuH9IGztCjQcd/N/39Dvg==}
     engines: {node: '>=16.0.0'}
+
+  qishui-music-api@0.2.2:
+    resolution: {integrity: sha512-zYUbYJJs2YOwwpe3BeySqg8hvh6X88RFdZr2lULKoak2QBlFTHavXlQjuzYV77MOtH0vcwML5hMCHDb3Vq3T0g==}
+    engines: {node: '>=24.0.0'}
 
   qqmusic-api-enhanced@1.0.8:
     resolution: {integrity: sha512-K7yeg15naBgGJVgE0hskb19eUzZ0nktOVZfdTp2UBm9/MLiFhHGQ5wK6e0c1Nfq6Ac7VdWp5+bqUxDr8L7NrGg==}
@@ -2855,6 +2862,8 @@ snapshots:
       tslib: 2.9.1
 
   pvutils@1.2.0: {}
+
+  qishui-music-api@0.2.2: {}
 
   qqmusic-api-enhanced@1.0.8: {}
 

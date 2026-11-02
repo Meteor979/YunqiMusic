@@ -12,6 +12,7 @@ const ncm = require('NeteaseCloudMusicApi')
 const { checkForUpdate, installUpdate } = require('./updater')
 const { createKugouAdapter } = require('./kugou')
 const { createQqAdapter } = require('./qq')
+const { createQishuiAdapter } = require('./qishui')
 
 if (process.env.YUNQI_USER_DATA) {
   const userDataPath = path.resolve(process.env.YUNQI_USER_DATA)
@@ -40,6 +41,8 @@ let store = {
   primaryProvider: 'netease',
   secondaryEnabled: true,
   kugouDevice: null,
+  qishuiDeviceId: null,
+  qishuiSession: null,
   lastTrack: null,
   windowBounds: null,
   loudnessEnabled: true,
@@ -49,6 +52,7 @@ let store = {
 const imageCache = new Map()
 let kugouProvider = null
 let qqProvider = null
+let qishuiProvider = null
 
 function statePath() {
   return path.join(app.getPath('userData'), 'yunqi-state.json')
@@ -71,8 +75,23 @@ function decryptStoredCookie(raw) {
   return ''
 }
 
-function decryptStoredCookies(raw) {
-  if (raw.cookies && typeof raw.cookies === 'object') return raw.cookies
+function decryptStoredSecrets(raw) {
+  if (raw.secrets && typeof raw.secrets === 'object') return raw.secrets
+  if (
+    typeof raw.secretsEncrypted === 'string' &&
+    safeStorage.isEncryptionAvailable()
+  ) {
+    try {
+      const decoded = JSON.parse(
+        safeStorage.decryptString(
+          Buffer.from(raw.secretsEncrypted, 'base64'),
+        ),
+      )
+      if (decoded && typeof decoded === 'object') return decoded
+    } catch {
+      // Fall through to the previous cookie-only encrypted format.
+    }
+  }
   if (
     typeof raw.cookiesEncrypted === 'string' &&
     safeStorage.isEncryptionAvailable()
@@ -83,9 +102,11 @@ function decryptStoredCookies(raw) {
           Buffer.from(raw.cookiesEncrypted, 'base64'),
         ),
       )
-      if (decoded && typeof decoded === 'object') return decoded
+      if (decoded && typeof decoded === 'object') {
+        return { cookies: decoded }
+      }
     } catch {
-      // Fall back to the pre-multi-provider cookie format.
+      // Fall back to the original single-cookie format.
     }
   }
   return null
@@ -95,7 +116,8 @@ function loadStore() {
   try {
     const raw = JSON.parse(fs.readFileSync(statePath(), 'utf8'))
     const legacyCookie = decryptStoredCookie(raw)
-    const storedCookies = decryptStoredCookies(raw)
+    const secrets = decryptStoredSecrets(raw)
+    const storedCookies = secrets?.cookies || secrets || null
     store = {
       ...store,
       ...raw,
@@ -106,9 +128,10 @@ function loadStore() {
           '',
         kugou: storedCookies?.kugou || '',
         qq: storedCookies?.qq || '',
+        qishui: '',
       },
       primaryProvider:
-        ['netease', 'kugou', 'qq'].includes(raw.primaryProvider)
+        ['netease', 'kugou', 'qq', 'qishui'].includes(raw.primaryProvider)
           ? raw.primaryProvider
           : 'netease',
       secondaryEnabled: raw.secondaryEnabled !== false,
@@ -116,6 +139,10 @@ function loadStore() {
         raw.kugouDevice && typeof raw.kugouDevice === 'object'
           ? raw.kugouDevice
           : null,
+      qishuiDeviceId:
+        secrets?.qishuiDeviceId || raw.qishuiDeviceId || null,
+      qishuiSession:
+        secrets?.qishuiSession || raw.qishuiSession || null,
       equalizerBands:
         Array.isArray(raw.equalizerBands) && raw.equalizerBands.length === 10
           ? raw.equalizerBands.map((value) =>
@@ -125,6 +152,8 @@ function loadStore() {
     }
     delete store.cookieEncrypted
     delete store.cookiesEncrypted
+    delete store.secretsEncrypted
+    delete store.secrets
     delete store.cookie
   } catch {
     // First launch or an unreadable settings file.
@@ -143,12 +172,17 @@ function saveStore() {
     kugouDevice: store.kugouDevice,
   }
 
+  const secrets = {
+    cookies: store.cookies,
+    qishuiDeviceId: store.qishuiDeviceId,
+    qishuiSession: store.qishuiSession,
+  }
   if (safeStorage.isEncryptionAvailable()) {
-    payload.cookiesEncrypted = safeStorage
-      .encryptString(JSON.stringify(store.cookies))
+    payload.secretsEncrypted = safeStorage
+      .encryptString(JSON.stringify(secrets))
       .toString('base64')
   } else {
-    payload.cookies = store.cookies
+    payload.secrets = secrets
   }
 
   fs.mkdirSync(path.dirname(statePath()), { recursive: true })
@@ -234,6 +268,18 @@ function initializeProviderAdapters() {
     getCookie: () => store.cookies.qq,
     setCookie: (cookie) => {
       store.cookies.qq = cookie
+      saveStore()
+    },
+  })
+  qishuiProvider = createQishuiAdapter({
+    getDeviceId: () => store.qishuiDeviceId,
+    setDeviceId: (deviceId) => {
+      store.qishuiDeviceId = deviceId
+      saveStore()
+    },
+    getSession: () => store.qishuiSession,
+    setSession: (qishuiSession) => {
+      store.qishuiSession = qishuiSession
       saveStore()
     },
   })
@@ -332,6 +378,14 @@ async function getNeteaseRoamSongs(limit = 8) {
 }
 
 async function getLibrary() {
+  if (store.primaryProvider === 'qishui') {
+    const library = await qishuiProvider.getLibrary()
+    return {
+      ...library,
+      provider: 'qishui',
+    }
+  }
+
   if (store.primaryProvider === 'qq') {
     const library = await qqProvider.getLibrary()
     return {
@@ -433,6 +487,7 @@ async function getNeteaseSongUrl(track) {
 async function searchProvider(provider, keywords) {
   if (provider === 'kugou') return kugouProvider.search(keywords)
   if (provider === 'qq') return qqProvider.search(keywords)
+  if (provider === 'qishui') return qishuiProvider.search(keywords)
   const body = await apiCall('search', {
     keywords,
     type: 1,
@@ -474,6 +529,7 @@ async function getProviderSongUrl(track) {
   let direct
   if (track.provider === 'kugou') direct = await kugouProvider.songUrl(track)
   else if (track.provider === 'qq') direct = await qqProvider.songUrl(track)
+  else if (track.provider === 'qishui') direct = await qishuiProvider.songUrl(track)
   else direct = await getNeteaseSongUrl(track)
   if (direct?.url && !direct.limited) return direct
 
@@ -481,7 +537,7 @@ async function getProviderSongUrl(track) {
     store.secondaryEnabled &&
     track.provider === store.primaryProvider
   ) {
-    const secondaries = ['netease', 'kugou', 'qq'].filter(
+    const secondaries = ['netease', 'kugou', 'qq', 'qishui'].filter(
       (provider) => provider !== store.primaryProvider,
     )
     for (const secondary of secondaries) {
@@ -492,6 +548,8 @@ async function getProviderSongUrl(track) {
         fallback = await kugouProvider.songUrl(fallbackTrack)
       } else if (secondary === 'qq') {
         fallback = await qqProvider.songUrl(fallbackTrack)
+      } else if (secondary === 'qishui') {
+        fallback = await qishuiProvider.songUrl(fallbackTrack)
       } else {
         fallback = await getNeteaseSongUrl(fallbackTrack)
       }
@@ -505,12 +563,13 @@ async function getProviderSongUrl(track) {
 }
 
 async function getProviderProfiles() {
-  const [netease, kugou, qq] = await Promise.all([
+  const [netease, kugou, qq, qishui] = await Promise.all([
     getNeteaseProfile().catch(() => null),
     kugouProvider.getProfile().catch(() => null),
     qqProvider.getProfile().catch(() => null),
+    qishuiProvider.getProfile().catch(() => null),
   ])
-  return { netease, kugou, qq }
+  return { netease, kugou, qq, qishui }
 }
 
 function registerIpc() {
@@ -522,7 +581,9 @@ function registerIpc() {
           ? kugouProvider.roam(8)
           : store.primaryProvider === 'qq'
             ? qqProvider.roam(8)
-            : getNeteaseRoamSongs(8)
+            : store.primaryProvider === 'qishui'
+              ? qishuiProvider.roam(8)
+              : getNeteaseRoamSongs(8)
       ).catch(() => []),
     ])
     return {
@@ -547,7 +608,9 @@ function registerIpc() {
         ? kugouProvider.roam(count)
         : store.primaryProvider === 'qq'
           ? qqProvider.roam(count)
-          : getNeteaseRoamSongs(count)
+          : store.primaryProvider === 'qishui'
+            ? qishuiProvider.roam(count)
+            : getNeteaseRoamSongs(count)
     )
   })
   ipcMain.handle('music:library', async () => getLibrary())
@@ -557,7 +620,7 @@ function registerIpc() {
     if (!keywords) return { songs: [], playlists: [] }
 
     const secondaryProviders = store.secondaryEnabled
-      ? ['netease', 'kugou', 'qq'].filter(
+      ? ['netease', 'kugou', 'qq', 'qishui'].filter(
           (provider) => provider !== store.primaryProvider,
         )
       : []
@@ -573,6 +636,8 @@ function registerIpc() {
           ? kugouProvider.searchPlaylists(keywords)
           : store.primaryProvider === 'qq'
             ? qqProvider.searchPlaylists(keywords)
+            : store.primaryProvider === 'qishui'
+              ? qishuiProvider.searchPlaylists(keywords)
             : apiCall('search', {
                 keywords,
                 type: 1000,
@@ -592,7 +657,7 @@ function registerIpc() {
   ipcMain.handle('music:playlist', async (_event, unifiedId) => {
     const [provider, ...idParts] = String(unifiedId || '').split(':')
     const playlistId = idParts.join(':')
-    if (!['netease', 'kugou', 'qq'].includes(provider) || !playlistId) {
+    if (!['netease', 'kugou', 'qq', 'qishui'].includes(provider) || !playlistId) {
       throw new Error('歌单编号无效')
     }
 
@@ -603,6 +668,11 @@ function registerIpc() {
     }
     if (provider === 'qq') {
       const playlist = await qqProvider.getPlaylist(playlistId)
+      if (!playlist) throw new Error('没有找到这个歌单')
+      return playlist
+    }
+    if (provider === 'qishui') {
+      const playlist = await qishuiProvider.getPlaylist(playlistId)
       if (!playlist) throw new Error('没有找到这个歌单')
       return playlist
     }
@@ -641,6 +711,9 @@ function registerIpc() {
     if (track.provider === 'qq') {
       return qqProvider.getLyric(track)
     }
+    if (track.provider === 'qishui') {
+      return qishuiProvider.getLyric(track)
+    }
     const body = await apiCall('lyric', { id: Number(track.providerId) })
     return {
       lrc: body.lrc?.lyric || '',
@@ -655,6 +728,9 @@ function registerIpc() {
     }
     if (track.provider === 'qq') {
       return { liked: false, loggedIn: Boolean(store.cookies.qq) }
+    }
+    if (track.provider === 'qishui') {
+      return qishuiProvider.getLikeState(track)
     }
     if (!store.cookies.netease) return { liked: false, loggedIn: false }
     try {
@@ -677,6 +753,9 @@ function registerIpc() {
     if (track.provider === 'qq') {
       throw new Error('QQ 音乐收藏接口暂未接入')
     }
+    if (track.provider === 'qishui') {
+      return qishuiProvider.setLike(track, Boolean(liked))
+    }
     if (!store.cookies.netease) throw new Error('登录后才能收藏歌曲')
     const body = await apiCall('like', {
       id: Number(track.providerId),
@@ -698,6 +777,8 @@ function registerIpc() {
       store.cookies.kugou = ''
     } else if (provider === 'qq') {
       store.cookies.qq = ''
+    } else if (provider === 'qishui') {
+      await qishuiProvider.logout().catch(() => {})
     }
     saveStore()
     return { ok: true }
@@ -824,7 +905,7 @@ function registerIpc() {
   })
 
   ipcMain.handle('platforms:set-primary', async (_event, provider) => {
-    if (!['netease', 'kugou', 'qq'].includes(provider)) {
+    if (!['netease', 'kugou', 'qq', 'qishui'].includes(provider)) {
       throw new Error('不支持的音乐平台')
     }
     store.primaryProvider = provider
@@ -859,6 +940,16 @@ function registerIpc() {
   ipcMain.handle('auth:qq-qr-check', async () => {
     if (!qqProvider) initializeProviderAdapters()
     return qqProvider.checkQrLogin()
+  })
+
+  ipcMain.handle('auth:qishui-qr-start', async () => {
+    if (!qishuiProvider) initializeProviderAdapters()
+    return qishuiProvider.startQrLogin()
+  })
+
+  ipcMain.handle('auth:qishui-qr-check', async () => {
+    if (!qishuiProvider) initializeProviderAdapters()
+    return qishuiProvider.checkQrLogin()
   })
 
   ipcMain.handle('app:remember-track', (_event, track) => {
