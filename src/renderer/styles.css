@@ -13,6 +13,9 @@
   --accent-bright: #f2f4f7;
   --ambient-primary: rgba(88, 104, 130, 0.3);
   --ambient-secondary: rgba(45, 51, 65, 0.28);
+  --scene-a: 88, 104, 130;
+  --scene-b: 45, 51, 65;
+  --scene-c: 74, 86, 108;
   --radius: 12px;
   --titlebar-height: 50px;
   --rail-width: 78px;
@@ -98,7 +101,7 @@ svg {
   position: absolute;
   inset: 0;
   z-index: -2;
-  opacity: 0.92;
+  opacity: 1;
   pointer-events: none;
 }
 
@@ -120,53 +123,60 @@ svg {
 .ambient-blob {
   position: absolute;
   display: block;
-  border-radius: 50%;
-  opacity: 0.78;
+  opacity: 1;
   transform: translateZ(0);
   backface-visibility: hidden;
   will-change: transform;
 }
 
 .blob-a {
-  top: 3%;
-  left: 6%;
-  width: 54%;
-  height: 59%;
+  top: -3%;
+  left: -2%;
+  width: 70%;
+  height: 74%;
   background: radial-gradient(
-    circle,
-    var(--scene-a, rgba(88, 104, 130, 0.42)) 0%,
-    var(--scene-a, rgba(88, 104, 130, 0.42)) 24%,
-    transparent 76%
+    ellipse at center,
+    rgba(var(--scene-a), 0.46) 0%,
+    rgba(var(--scene-a), 0.31) 18%,
+    rgba(var(--scene-a), 0.17) 36%,
+    rgba(var(--scene-a), 0.065) 55%,
+    rgba(var(--scene-a), 0.02) 72%,
+    transparent 88%
   );
   animation: ambient-drift-a 28s ease-in-out infinite alternate;
 }
 
 .blob-b {
-  right: 0;
-  bottom: -8%;
-  width: 58%;
-  height: 65%;
+  right: -5%;
+  bottom: -14%;
+  width: 74%;
+  height: 80%;
   background: radial-gradient(
-    circle,
-    var(--scene-b, rgba(45, 51, 65, 0.36)) 0%,
-    var(--scene-b, rgba(45, 51, 65, 0.36)) 22%,
-    transparent 78%
+    ellipse at center,
+    rgba(var(--scene-b), 0.36) 0%,
+    rgba(var(--scene-b), 0.25) 20%,
+    rgba(var(--scene-b), 0.13) 40%,
+    rgba(var(--scene-b), 0.05) 60%,
+    rgba(var(--scene-b), 0.015) 76%,
+    transparent 92%
   );
   animation: ambient-drift-b 34s ease-in-out infinite alternate;
 }
 
 .blob-c {
-  top: 26%;
-  left: 35%;
-  width: 42%;
-  height: 48%;
+  top: 19%;
+  left: 29%;
+  width: 60%;
+  height: 64%;
   background: radial-gradient(
-    circle,
-    var(--scene-c, rgba(74, 86, 108, 0.25)) 0%,
-    var(--scene-c, rgba(74, 86, 108, 0.25)) 20%,
-    transparent 74%
+    ellipse at center,
+    rgba(var(--scene-c), 0.28) 0%,
+    rgba(var(--scene-c), 0.18) 22%,
+    rgba(var(--scene-c), 0.09) 44%,
+    rgba(var(--scene-c), 0.03) 64%,
+    rgba(var(--scene-c), 0.01) 78%,
+    transparent 92%
   );
-  opacity: 0.62;
   animation: ambient-drift-c 39s ease-in-out infinite alternate;
 }
 

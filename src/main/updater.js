@@ -9,6 +9,27 @@ const UPDATE_REPOSITORY =
 const LATEST_RELEASE_ROOT = `https://github.com/${UPDATE_REPOSITORY}/releases/latest/download`
 const RELEASE_API = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`
 const USER_AGENT = 'YunqiMusic-Updater'
+const POWERSHELL_PATH = path.join(
+  process.env.SystemRoot || 'C:\\Windows',
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe',
+)
+
+function updateLog(message) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'yunqi-update.log')
+    fs.mkdirSync(path.dirname(logPath), { recursive: true })
+    fs.appendFileSync(
+      logPath,
+      `${new Date().toISOString()} ${String(message)}\n`,
+      'utf8',
+    )
+  } catch {
+    // Logging must never block the updater.
+  }
+}
 
 function versionParts(version) {
   return String(version)
@@ -141,6 +162,9 @@ async function checkForUpdate() {
 }
 
 async function downloadUpdate(update) {
+  updateLog(
+    `Downloading ${update.latestVersion} from ${update.assetUrl}`,
+  )
   let response
   try {
     response = await fetchResponse(
@@ -148,10 +172,12 @@ async function downloadUpdate(update) {
       { headers: { Accept: 'application/octet-stream' } },
       { attempts: 1, timeout: 180000 },
     )
-  } catch {
+  } catch (error) {
+    updateLog(`Download request failed: ${error?.message || error}`)
     throw new Error('更新文件下载超时，请检查网络后重试')
   }
   if (!response.ok) {
+    updateLog(`Download returned HTTP ${response.status}`)
     throw new Error(`更新下载失败（${response.status}）`)
   }
 
@@ -167,39 +193,48 @@ async function downloadUpdate(update) {
 
   const actualHash = crypto.createHash('sha256').update(data).digest('hex')
   if (actualHash !== update.sha256) {
+    updateLog(
+      `Downloaded hash mismatch: expected ${update.sha256}, got ${actualHash}`,
+    )
     throw new Error('更新文件校验失败')
   }
+  updateLog(`Downloaded and verified ${data.length} bytes`)
 
   const updateDir = path.join(
-    app.getPath('temp'),
+    app.getPath('userData'),
+    'updates',
     `yunqi-update-${update.latestVersion}-${Date.now()}`,
   )
-  fs.mkdirSync(updateDir, { recursive: true })
-  const downloadPath = path.join(updateDir, 'app.asar')
-  const file = fs.openSync(downloadPath, 'w')
   try {
-    fs.writeFileSync(file, data)
-    fs.fsyncSync(file)
-  } finally {
-    fs.closeSync(file)
-  }
-  return {
-    updateDir,
-    downloadPath,
-    sha256: update.sha256,
+    fs.mkdirSync(updateDir, { recursive: true })
+    const downloadPath = path.join(updateDir, 'update.bin')
+    const file = fs.openSync(downloadPath, 'w')
+    try {
+      fs.writeFileSync(file, data)
+      fs.fsyncSync(file)
+    } finally {
+      fs.closeSync(file)
+    }
+    updateLog(`Saved update to ${downloadPath}`)
+    return {
+      updateDir,
+      downloadPath,
+      sha256: update.sha256,
+    }
+  } catch (error) {
+    updateLog(`Could not save update: ${error?.message || error}`)
+    throw new Error(`无法保存更新文件：${error?.message || error}`)
   }
 }
 
 function createReplacementScript() {
   return `
-param(
-  [int]$AppProcessId,
-  [string]$Source,
-  [string]$Target,
-  [string]$Restart,
-  [string]$ExpectedHash,
-  [string]$LogPath
-)
+$AppProcessId = [int]$env:YUNQI_UPDATE_PID
+$Source = $env:YUNQI_UPDATE_SOURCE
+$Target = $env:YUNQI_UPDATE_TARGET
+$Restart = $env:YUNQI_UPDATE_RESTART
+$ExpectedHash = $env:YUNQI_UPDATE_HASH
+$LogPath = $env:YUNQI_UPDATE_LOG
 
 $ErrorActionPreference = 'Stop'
 
@@ -314,52 +349,62 @@ try {
   if ($backup) {
     Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
   }
-  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Split-Path -Parent $Source) -Force -ErrorAction SilentlyContinue
 }
 `
 }
 
-function launchReplacement({ updateDir, downloadPath, sha256 }) {
+async function launchReplacement({ downloadPath, sha256 }) {
   const appPath = app.getAppPath()
   if (!appPath.endsWith('app.asar')) {
     throw new Error('开发模式下不能安装更新')
   }
 
-  const scriptPath = path.join(updateDir, 'apply-update.ps1')
-  const logPath = path.join(updateDir, 'apply-update.log')
+  const logPath = path.join(app.getPath('userData'), 'yunqi-update.log')
   const script = createReplacementScript()
-  fs.writeFileSync(scriptPath, `\ufeff${script}`, 'utf8')
-  const helper = spawn(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-WindowStyle',
-      'Hidden',
-      '-File',
-      scriptPath,
-      '-AppProcessId',
-      String(process.pid),
-      '-Source',
-      downloadPath,
-      '-Target',
-      appPath,
-      '-Restart',
-      process.execPath,
-      '-ExpectedHash',
-      sha256,
-      '-LogPath',
-      logPath,
-    ],
-    {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    },
-  )
-  helper.unref()
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
+  updateLog(`Starting update helper for ${downloadPath}`)
+
+  await new Promise((resolve, reject) => {
+    const helper = spawn(
+      POWERSHELL_PATH,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-WindowStyle',
+        'Hidden',
+        '-EncodedCommand',
+        encodedScript,
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: {
+          ...process.env,
+          YUNQI_UPDATE_PID: String(process.pid),
+          YUNQI_UPDATE_SOURCE: downloadPath,
+          YUNQI_UPDATE_TARGET: appPath,
+          YUNQI_UPDATE_RESTART: process.execPath,
+          YUNQI_UPDATE_HASH: sha256,
+          YUNQI_UPDATE_LOG: logPath,
+        },
+      },
+    )
+
+    helper.once('spawn', () => {
+      updateLog(`Update helper started with PID ${helper.pid}`)
+      helper.unref()
+      resolve()
+    })
+    helper.once('error', (error) => {
+      updateLog(`Update helper failed to start: ${error.message}`)
+      reject(new Error(`更新辅助程序启动失败：${error.message}`))
+    })
+  })
 }
 
 async function installUpdate(update) {
@@ -368,8 +413,9 @@ async function installUpdate(update) {
   }
 
   const downloaded = await downloadUpdate(update)
-  launchReplacement(downloaded)
-  setTimeout(() => app.quit(), 300)
+  await launchReplacement(downloaded)
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  app.quit()
   return { started: true }
 }
 

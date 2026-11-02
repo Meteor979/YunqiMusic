@@ -603,9 +603,9 @@ function transitionAmbientPalette(hue, saturation) {
   const colorB = hslToRgb(nextPalette.hue + 24, nextPalette.saturation * 0.8, 0.43)
   const colorC = hslToRgb(nextPalette.hue - 20, nextPalette.saturation * 0.65, 0.5)
 
-  next.style.setProperty('--scene-a', `rgba(${colorA.join(', ')}, 0.44)`)
-  next.style.setProperty('--scene-b', `rgba(${colorB.join(', ')}, 0.36)`)
-  next.style.setProperty('--scene-c', `rgba(${colorC.join(', ')}, 0.26)`)
+  next.style.setProperty('--scene-a', colorA.join(', '))
+  next.style.setProperty('--scene-b', colorB.join(', '))
+  next.style.setProperty('--scene-c', colorC.join(', '))
   next.classList.add('is-active')
   current.classList.remove('is-active')
   ambientSceneIndex = nextIndex
