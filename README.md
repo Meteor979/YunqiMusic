@@ -37,7 +37,7 @@ pnpm run pack:dir
 GitHub Actions 会自动构建 `app.asar` 和 `update.json`，并发布到 GitHub Releases。发布后，应用会在账户菜单中自动发现并一键更新。
 
 ```powershell
-git tag v0.4.0
+git tag v0.4.1
 git push origin main --tags
 ```
 

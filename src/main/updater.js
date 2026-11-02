@@ -6,6 +6,7 @@ const { spawn } = require('child_process')
 
 const UPDATE_REPOSITORY =
   process.env.YUNQI_UPDATE_REPOSITORY || 'Meteor979/YunqiMusic'
+const LATEST_RELEASE_ROOT = `https://github.com/${UPDATE_REPOSITORY}/releases/latest/download`
 const RELEASE_API = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`
 const USER_AGENT = 'YunqiMusic-Updater'
 
@@ -26,37 +27,93 @@ function isNewerVersion(candidate, current) {
   return false
 }
 
-async function fetchResponse(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'application/vnd.github+json',
-      ...(options.headers || {}),
-    },
-    redirect: 'follow',
-  })
-  return response
+async function fetchResponse(url, options = {}, retryOptions = {}) {
+  const attempts = retryOptions.attempts || 2
+  const timeout = retryOptions.timeout || 12000
+  let lastError = null
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fetch(url, {
+        ...options,
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Cache-Control': 'no-cache',
+          ...(options.headers || {}),
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(timeout),
+      })
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
+      }
+    }
+  }
+  throw lastError
 }
 
 async function checkForUpdate() {
-  const response = await fetchResponse(RELEASE_API)
-  if (response.status === 404) {
-    return {
-      available: false,
-      currentVersion: app.getVersion(),
-      reason: '还没有发布版本',
+  let manifest = null
+  let assetUrl = ''
+
+  try {
+    const directResponse = await fetchResponse(
+      `${LATEST_RELEASE_ROOT}/update.json`,
+      { headers: { Accept: 'application/json' } },
+      { attempts: 1, timeout: 10000 },
+    )
+    if (directResponse.status === 404) {
+      return {
+        available: false,
+        currentVersion: app.getVersion(),
+        reason: '还没有发布版本',
+      }
     }
-  }
-  if (!response.ok) {
-    throw new Error(`GitHub Releases 请求失败（${response.status}）`)
+    if (directResponse.ok) {
+      manifest = await directResponse.json()
+    }
+  } catch {
+    // Fall back to the GitHub release API when the redirect CDN is unavailable.
   }
 
-  const release = await response.json()
-  const latestVersion = String(release.tag_name || release.name || '').replace(
-    /^v/i,
-    '',
-  )
+  if (!manifest) {
+    const releaseResponse = await fetchResponse(
+      RELEASE_API,
+      { headers: { Accept: 'application/vnd.github+json' } },
+      { attempts: 2, timeout: 12000 },
+    )
+    if (releaseResponse.status === 404) {
+      return {
+        available: false,
+        currentVersion: app.getVersion(),
+        reason: '还没有发布版本',
+      }
+    }
+    if (!releaseResponse.ok) {
+      throw new Error(`GitHub Releases 请求失败（${releaseResponse.status}）`)
+    }
+    const release = await releaseResponse.json()
+    const manifestAsset = (release.assets || []).find(
+      (asset) => asset.name === 'update.json',
+    )
+    if (!manifestAsset) throw new Error('最新版本缺少 update.json')
+    const manifestResponse = await fetchResponse(
+      manifestAsset.browser_download_url,
+      { headers: { Accept: 'application/octet-stream' } },
+      { attempts: 2, timeout: 12000 },
+    )
+    if (!manifestResponse.ok) throw new Error('无法读取更新清单')
+    manifest = await manifestResponse.json()
+    const assetName = manifest.asset || 'app.asar'
+    const appAsset = (release.assets || []).find(
+      (asset) => asset.name === assetName,
+    )
+    if (!appAsset) throw new Error('Update asset is missing')
+    assetUrl = appAsset.browser_download_url
+  }
+
+  const latestVersion = String(manifest.version || '').replace(/^v/i, '')
   if (!latestVersion || !isNewerVersion(latestVersion, app.getVersion())) {
     return {
       available: false,
@@ -65,31 +122,8 @@ async function checkForUpdate() {
     }
   }
 
-  const manifestAsset = (release.assets || []).find(
-    (asset) => asset.name === 'update.json',
-  )
-  if (!manifestAsset) {
-    throw new Error('最新版本缺少 update.json')
-  }
-
-  const manifestResponse = await fetchResponse(manifestAsset.browser_download_url, {
-    headers: { Accept: 'application/octet-stream' },
-  })
-  if (!manifestResponse.ok) {
-    throw new Error('无法读取更新清单')
-  }
-  const manifest = await manifestResponse.json()
-  if (
-    manifest.version &&
-    String(manifest.version).replace(/^v/i, '') !== latestVersion
-  ) {
-    throw new Error('更新清单版本与 Release 不一致')
-  }
   const assetName = manifest.asset || 'app.asar'
-  const appAsset = (release.assets || []).find(
-    (asset) => asset.name === assetName,
-  )
-  if (!appAsset || !manifest.sha256) {
+  if (!manifest.sha256) {
     throw new Error('最新版本缺少应用包或校验值')
   }
 
@@ -98,9 +132,11 @@ async function checkForUpdate() {
     currentVersion: app.getVersion(),
     latestVersion,
     assetName,
-    assetUrl: appAsset.browser_download_url,
+    assetUrl:
+      assetUrl ||
+      `${LATEST_RELEASE_ROOT}/${encodeURIComponent(assetName)}`,
     sha256: String(manifest.sha256).toLowerCase(),
-    releaseUrl: release.html_url,
+    releaseUrl: `https://github.com/${UPDATE_REPOSITORY}/releases/latest`,
   }
 }
 
