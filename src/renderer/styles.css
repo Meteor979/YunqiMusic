@@ -877,12 +877,30 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 
 .transport button {
+  position: relative;
   display: grid;
   place-items: center;
   transition:
     color 180ms ease,
     background 180ms ease,
     transform 180ms ease;
+}
+
+.transport-loop-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.album-loop-button[hidden] {
+  display: none;
+}
+
+.album-loop-button svg {
+  width: 17px;
+  height: 17px;
 }
 
 .transport-side {
@@ -2423,23 +2441,13 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   background: var(--line);
 }
 
-.roam-menu-modes,
-.roam-menu-moods {
+.roam-menu-modes {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
 }
 
-.roam-menu-modes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.roam-menu-moods {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 4px;
-}
-
-.roam-menu-modes button,
-.roam-menu-moods button {
+.roam-menu-modes button {
   min-height: 30px;
   padding: 0 6px;
   border-radius: 8px;
@@ -2450,14 +2458,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
     background 150ms ease;
 }
 
-.roam-menu-modes button:hover,
-.roam-menu-moods button:hover {
+.roam-menu-modes button:hover {
   background: rgba(255, 255, 255, 0.055);
   color: var(--text-soft);
 }
 
-.roam-menu-modes button.is-active,
-.roam-menu-moods button.is-active {
+.roam-menu-modes button.is-active {
   background: rgba(255, 255, 255, 0.09);
   color: var(--text);
 }

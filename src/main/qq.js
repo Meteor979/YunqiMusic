@@ -220,10 +220,10 @@ function createQqAdapter({ getCookie, setCookie }) {
     return list.map(normalizeQqPlaylist).filter(Boolean)
   }
 
-  async function roam(limit = 8) {
+  async function recommendationTracks(type) {
     const qq = await api()
     const response = await qq.recommend_songs({
-      type: 5,
+      type,
       cookie: accountCookie(),
     })
     const songs =
@@ -231,10 +231,36 @@ function createQqAdapter({ getCookie, setCookie }) {
       response.body?.data?.songlist ||
       response.body?.data?.songs ||
       []
-    return songs
-      .slice(0, Math.max(1, Math.min(30, Number(limit) || 8)))
-      .map(normalizeQqSong)
-      .filter(Boolean)
+    return songs.map(normalizeQqSong).filter(Boolean)
+  }
+
+  async function roam(limit = 8, mode = 'continuous') {
+    const count = Math.max(1, Math.min(30, Number(limit) || 8))
+    if (mode !== 'explore') {
+      return (await recommendationTracks(5)).slice(0, count)
+    }
+
+    const responses = await Promise.allSettled(
+      [1, 2, 3, 4, 5, 6].map((type) => recommendationTracks(type)),
+    )
+    const batches = responses
+      .filter((response) => response.status === 'fulfilled')
+      .map((response) => response.value || [])
+    const tracks = []
+    const seen = new Set()
+    const largest = Math.max(0, ...batches.map((batch) => batch.length))
+    for (let index = 0; index < largest && tracks.length < count; index += 1) {
+      for (const batch of batches) {
+        const track = batch[index]
+        if (!track || seen.has(track.id)) continue
+        seen.add(track.id)
+        tracks.push(track)
+        if (tracks.length >= count) break
+      }
+    }
+    return tracks.length
+      ? tracks
+      : (await recommendationTracks(5)).slice(0, count)
   }
 
   async function songUrl(track, qualityLevel = 'auto') {

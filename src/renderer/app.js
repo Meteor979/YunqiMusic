@@ -22,8 +22,10 @@ const state = {
   favoriteAlbums: [],
   queue: [],
   queueMode: 'roam',
+  queueContext: 'roam',
+  albumLoop: false,
+  activeAlbumId: null,
   roamMode: 'continuous',
-  roamMood: 'random',
   currentIndex: -1,
   track: null,
   currentView: 'now',
@@ -37,8 +39,11 @@ const state = {
   playing: false,
   liked: false,
   loudnessEnabled: true,
-  equalizerEnabled: true,
+  smartEqualizerEnabled: true,
+  equalizerEnabled: false,
+  reverbEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  smartPresetBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   qualityLevel: 'auto',
   trackLoudnessDb: 0,
   playbackUrls: [],
@@ -105,10 +110,13 @@ const el = {
   likeButton: $('#like-button'),
   shuffleButton: $('#shuffle-button'),
   repeatButton: $('#repeat-button'),
+  albumLoopButton: $('#album-loop-button'),
   equalizerPanel: $('#equalizer-panel'),
   equalizerBands: $('#equalizer-bands'),
   equalizerToggle: $('#equalizer-toggle'),
   loudnessToggle: $('#loudness-toggle'),
+  smartEqualizerToggle: $('#smart-equalizer-toggle'),
+  reverbToggle: $('#reverb-toggle'),
   equalizerPresets: $('#equalizer-presets'),
   toastStack: $('#toast-stack'),
   tooltip: $('#app-tooltip'),
@@ -138,6 +146,210 @@ const EQ_PRESETS = {
   vocal: [-1, -0.5, 0, 1, 2, 2.5, 2, 1, 0, -1],
   bass: [4, 3.5, 2.5, 1.5, 0, -0.5, -1, -0.5, 0, 0.5],
 }
+const SMART_AUDIO_PRESETS = [
+  {
+    id: 'metal',
+    keywords: ['metal', '金属', 'hardcore', 'hard rock', '硬核'],
+    bands: [1.8, 1.3, 0.4, -0.8, -1.2, -0.4, 0.8, 1.4, 1.5, 1.2],
+  },
+  {
+    id: 'rock',
+    keywords: ['rock', '摇滚', 'punk', '朋克', '乐队', 'band', 'guitar rock'],
+    bands: [1.2, 1, 0.5, 0, -0.4, 0.4, 1, 1.2, 0.9, 0.5],
+  },
+  {
+    id: 'electronic',
+    keywords: [
+      'electronic',
+      'electronica',
+      'edm',
+      'synth',
+      'techno',
+      'house',
+      'remix',
+      '电子',
+      '电音',
+    ],
+    bands: [2.6, 2.2, 1.2, 0.2, -0.5, 0.3, 1.1, 1.6, 1.8, 1.2],
+  },
+  {
+    id: 'hiphop',
+    keywords: [
+      'hip hop',
+      'hip-hop',
+      'rap',
+      'trap',
+      '说唱',
+      '嘻哈',
+      'mixtape',
+    ],
+    bands: [3, 2.5, 1.4, 0.4, -0.4, 0.2, 0.8, 1.1, 0.7, 0.2],
+  },
+  {
+    id: 'dance',
+    keywords: ['dance', 'disco', 'funk', '舞曲', '迪斯科', '放克'],
+    bands: [2.2, 1.8, 0.8, 0, -0.2, 0.3, 0.9, 1.2, 1.3, 0.8],
+  },
+  {
+    id: 'jazz',
+    keywords: ['jazz', 'swing', 'bossa', '爵士', '摇摆', '巴萨诺瓦'],
+    bands: [0.8, 0.6, 0.4, 0.2, 0.4, 0.8, 0.9, 0.6, 0.3, 0.1],
+  },
+  {
+    id: 'classical',
+    keywords: [
+      'classical',
+      'symphony',
+      'sonata',
+      'concerto',
+      'orchestra',
+      '古典',
+      '交响',
+      '奏鸣曲',
+      '协奏曲',
+    ],
+    bands: [-0.3, -0.2, 0, 0, 0.1, 0.3, 0.5, 0.7, 0.8, 0.8],
+  },
+  {
+    id: 'acoustic',
+    keywords: [
+      'acoustic',
+      'folk',
+      'unplugged',
+      '民谣',
+      '木吉他',
+      '不插电',
+      '原声吉他',
+    ],
+    bands: [-0.8, -0.5, 0.2, 0.6, 0.8, 0.7, 0.5, 0.2, -0.2, -0.5],
+  },
+  {
+    id: 'vocal',
+    keywords: ['vocal', 'acapella', '人声', '清唱', '女声', '男声', 'live', '现场'],
+    bands: [-1.2, -0.8, -0.2, 0.8, 1.8, 2.2, 1.6, 0.6, -0.5, -1],
+  },
+  {
+    id: 'rnb',
+    keywords: ['r&b', 'rnb', 'soul', 'neo soul', '灵魂乐', '节奏布鲁斯'],
+    bands: [1.6, 1.2, 0.6, 0, 0.2, 0.8, 1.1, 0.8, 0.4, 0],
+  },
+  {
+    id: 'ambient',
+    keywords: [
+      'ambient',
+      'meditation',
+      'sleep',
+      '氛围',
+      '环境音乐',
+      '冥想',
+      '助眠',
+    ],
+    bands: [-1.8, -1.2, -0.4, 0.2, 0.4, 0.2, 0, -0.4, -0.8, -1.2],
+  },
+  {
+    id: 'lofi',
+    keywords: ['lo-fi', 'lofi', 'chillhop', 'study beats', '自习', '学习音乐'],
+    bands: [0.8, 0.4, -0.3, -0.8, -0.6, 0.2, 0.5, 0.1, -0.6, -1.2],
+  },
+  {
+    id: 'soundtrack',
+    keywords: [
+      'soundtrack',
+      'original score',
+      'ost',
+      'score',
+      '电影原声',
+      '影视原声',
+      '配乐',
+    ],
+    bands: [0.5, 0.8, 0.3, -0.2, 0.2, 0.5, 0.8, 0.9, 0.7, 0.4],
+  },
+  {
+    id: 'vocaloid',
+    keywords: ['vocaloid', '初音', '镜音', '巡音', '洛天依', 'utau'],
+    bands: [0.8, 1, 0.5, 0.2, 0.5, 1.4, 1.8, 1.5, 1, 0.5],
+  },
+  {
+    id: 'anime',
+    keywords: ['anime', '动漫', '二次元', '动画', '片头曲', '片尾曲', 'opening', 'ending'],
+    bands: [0.3, 0.6, 0.4, 0.2, 0.4, 1.1, 1.5, 1.3, 0.8, 0.4],
+  },
+  {
+    id: 'citypop',
+    keywords: ['city pop', 'citypop', '城市流行', '昭和', 'urban pop'],
+    bands: [1, 0.8, 0.5, 0.2, 0.3, 0.6, 0.9, 0.8, 0.5, 0.2],
+  },
+  {
+    id: 'kpop',
+    keywords: ['k-pop', 'kpop', '韩语', '韩国流行', 'korean pop'],
+    bands: [1.4, 1.2, 0.8, 0.3, 0.2, 0.6, 1.2, 1.4, 1.1, 0.6],
+  },
+  {
+    id: 'mandopop',
+    keywords: ['mandopop', '华语流行', '国语歌', '中文流行', '华语音乐'],
+    bands: [0.4, 0.7, 0.3, 0.1, 0.5, 1.1, 1, 0.7, 0.4, 0.2],
+  },
+  {
+    id: 'cantopop',
+    keywords: ['cantopop', '粤语', '港乐', '广东歌'],
+    bands: [0.2, 0.5, 0.2, 0.3, 0.7, 1.2, 1.1, 0.7, 0.3, 0.1],
+  },
+  {
+    id: 'guofeng',
+    keywords: ['国风', '古风', '民乐', '古筝', '二胡', '琵琶', '戏腔', '笛子'],
+    bands: [0.3, 0.5, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5, 0.4, 0.3],
+  },
+  {
+    id: 'blues',
+    keywords: ['blues', '蓝调', 'boogie', 'rhythm and blues'],
+    bands: [0.8, 0.7, 0.4, 0.2, 0.3, 0.6, 0.8, 0.5, 0.2, 0],
+  },
+  {
+    id: 'punk',
+    keywords: ['punk', '朋克', 'pop punk', 'hardcore punk'],
+    bands: [1, 0.9, 0.3, -0.3, -0.5, 0.3, 1.3, 1.6, 1.2, 0.6],
+  },
+  {
+    id: 'indie',
+    keywords: ['indie', '独立音乐', '独立流行', '独立摇滚', 'bedroom pop'],
+    bands: [-0.2, 0.1, 0.2, 0.4, 0.6, 0.7, 0.6, 0.4, 0.1, -0.2],
+  },
+  {
+    id: 'latin',
+    keywords: ['latin', '拉丁', 'salsa', 'merengue', 'reggaeton'],
+    bands: [1, 0.9, 0.5, 0.1, 0.2, 0.5, 0.9, 1, 0.7, 0.3],
+  },
+  {
+    id: 'reggae',
+    keywords: ['reggae', '雷鬼', 'dub', 'ska'],
+    bands: [1.2, 1.4, 0.9, 0.2, -0.2, 0.2, 0.5, 0.4, 0.2, 0],
+  },
+  {
+    id: 'country',
+    keywords: ['country', '乡村音乐', 'bluegrass', 'americana'],
+    bands: [-0.4, -0.1, 0.2, 0.5, 0.7, 0.8, 0.7, 0.4, 0.1, -0.3],
+  },
+  {
+    id: 'audiophile',
+    keywords: ['hi-res', 'hires', 'audiophile', '发烧', '母带', '试音'],
+    bands: [-0.3, -0.2, 0, 0, 0, 0.1, 0.3, 0.5, 0.6, 0.5],
+  },
+  {
+    id: 'jpop',
+    keywords: ['j-pop', 'jpop', '日语歌', '日本流行', 'japanese pop'],
+    bands: [0.4, 0.7, 0.5, 0.3, 0.5, 1, 1.3, 1.1, 0.6, 0.2],
+  },
+  {
+    id: 'night',
+    keywords: ['night', 'midnight', '深夜', '午夜', '失眠', '夜色', '孤独'],
+    bands: [-1, -0.5, 0, 0.3, 0.4, 0, 0.2, -0.2, -0.5, -0.8],
+  },
+  {
+    id: 'pop',
+    keywords: ['pop', '流行', '情歌', 'ballad', '抒情'],
+    bands: [0.5, 0.8, 0.4, 0, -0.2, 0.3, 0.8, 1, 0.8, 0.4],
+  },
+]
 const QUALITY_OPTIONS = {
   auto: '自动',
   jymaster: '超清母带',
@@ -169,6 +381,9 @@ let mediaSource = null
 let normalizerGain = null
 let compressor = null
 let equalizerNodes = []
+let reverbConvolver = null
+let reverbDry = null
+let reverbWet = null
 let saveAudioTimer = null
 let contextPrefetchTimer = null
 let tooltipTarget = null
@@ -291,11 +506,53 @@ function dbToGain(value) {
   return Math.pow(10, value / 20)
 }
 
+function detectSmartAudioPreset(track) {
+  const metadata = [
+    track?.name,
+    track?.album,
+    ...(track?.artists || []),
+    track?.providerData?.genre,
+    track?.providerData?.tag,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  let selected = SMART_AUDIO_PRESETS.find((preset) => preset.id === 'pop')
+  let selectedScore = 0
+  for (const preset of SMART_AUDIO_PRESETS) {
+    let score = 0
+    for (const keyword of preset.keywords) {
+      if (metadata.includes(keyword)) {
+        score += Math.max(1, keyword.length / 4)
+      }
+    }
+    if (score > selectedScore) {
+      selected = preset
+      selectedScore = score
+    }
+  }
+  return selected || SMART_AUDIO_PRESETS[SMART_AUDIO_PRESETS.length - 1]
+}
+
+function applySmartAudioPreset(track) {
+  state.smartPresetBands = track
+    ? [...detectSmartAudioPreset(track).bands]
+    : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  applyEqualizer()
+}
+
 function applyEqualizer() {
   if (!audioContext || !equalizerNodes.length) return
   const now = audioContext.currentTime
   equalizerNodes.forEach((filter, index) => {
-    const gain = state.equalizerEnabled ? state.equalizerBands[index] : 0
+    const manualGain = state.equalizerEnabled
+      ? Number(state.equalizerBands[index] || 0)
+      : 0
+    const smartGain = state.smartEqualizerEnabled
+      ? Number(state.smartPresetBands[index] || 0)
+      : 0
+    const gain = Math.max(-12, Math.min(12, manualGain + smartGain))
     filter.gain.setTargetAtTime(gain, now, 0.04)
   })
   el.equalizerBands.classList.toggle('is-disabled', !state.equalizerEnabled)
@@ -331,6 +588,38 @@ function applyLoudnessNormalization() {
   compressor.release.setTargetAtTime(0.24, now, 0.05)
 }
 
+function createReverbImpulse(context) {
+  const duration = 1.15
+  const length = Math.floor(context.sampleRate * duration)
+  const impulse = context.createBuffer(2, length, context.sampleRate)
+  for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
+    const data = impulse.getChannelData(channel)
+    let smoothed = 0
+    for (let index = 0; index < length; index += 1) {
+      const noise = Math.random() * 2 - 1
+      smoothed = smoothed * 0.78 + noise * 0.22
+      const envelope = Math.pow(1 - index / length, 2.8)
+      data[index] = smoothed * envelope * (channel === 0 ? 1 : 0.96)
+    }
+  }
+  return impulse
+}
+
+function applyReverb() {
+  if (!audioContext || !reverbDry || !reverbWet) return
+  const now = audioContext.currentTime
+  reverbDry.gain.setTargetAtTime(
+    state.reverbEnabled ? 0.96 : 1,
+    now,
+    0.08,
+  )
+  reverbWet.gain.setTargetAtTime(
+    state.reverbEnabled ? 0.1 : 0,
+    now,
+    0.08,
+  )
+}
+
 async function ensureAudioGraph() {
   if (!audioContext) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext
@@ -340,6 +629,11 @@ async function ensureAudioGraph() {
     mediaSource = audioContext.createMediaElementSource(audio)
     normalizerGain = audioContext.createGain()
     compressor = audioContext.createDynamicsCompressor()
+    reverbDry = audioContext.createGain()
+    reverbWet = audioContext.createGain()
+    reverbConvolver = audioContext.createConvolver()
+    reverbConvolver.normalize = true
+    reverbConvolver.buffer = createReverbImpulse(audioContext)
     equalizerNodes = EQ_FREQUENCIES.map((frequency) => {
       const filter = audioContext.createBiquadFilter()
       filter.type = 'peaking'
@@ -356,12 +650,17 @@ async function ensureAudioGraph() {
       previous.connect(filter)
       previous = filter
     }
-    previous.connect(audioContext.destination)
+    previous.connect(reverbDry)
+    reverbDry.connect(audioContext.destination)
+    previous.connect(reverbConvolver)
+    reverbConvolver.connect(reverbWet)
+    reverbWet.connect(audioContext.destination)
   }
 
   if (audioContext.state === 'suspended') await audioContext.resume()
   applyLoudnessNormalization()
   applyEqualizer()
+  applyReverb()
 }
 
 function saveAudioSettings() {
@@ -370,7 +669,9 @@ function saveAudioSettings() {
     api
       .setAudioSettings({
         loudnessEnabled: state.loudnessEnabled,
+        smartEqualizerEnabled: state.smartEqualizerEnabled,
         equalizerEnabled: state.equalizerEnabled,
+        reverbEnabled: state.reverbEnabled,
         equalizerBands: state.equalizerBands,
         qualityLevel: state.qualityLevel,
       })
@@ -409,6 +710,8 @@ function renderEqualizerBands() {
   )
   el.equalizerToggle.checked = state.equalizerEnabled
   el.loudnessToggle.checked = state.loudnessEnabled
+  el.smartEqualizerToggle.checked = state.smartEqualizerEnabled
+  el.reverbToggle.checked = state.reverbEnabled
   updatePresetSelection()
 }
 
@@ -511,6 +814,7 @@ function applyStaggeredReveal(root) {
 
 function updateTrackUI(track) {
   state.track = track
+  applySmartAudioPreset(track)
   el.trackCopy.classList.remove('is-refreshing')
   requestAnimationFrame(() => {
     if (state.track === track) {
@@ -1028,6 +1332,23 @@ async function playTrackFromList(track, listKey) {
   if (!Array.isArray(list) || !list.length) return
   state.queue = [...list]
   state.queueMode = listKey === 'roam' ? 'roam' : 'context'
+  const isAlbum =
+    listKey === 'playlist' && state.activePlaylist?.kind === 'album'
+  state.queueContext = isAlbum
+    ? 'album'
+    : listKey === 'roam'
+      ? 'roam'
+      : 'context'
+  if (isAlbum) {
+    if (state.activeAlbumId !== state.activePlaylist.id) {
+      state.albumLoop = false
+    }
+    state.activeAlbumId = state.activePlaylist.id
+  } else {
+    state.albumLoop = false
+    state.activeAlbumId = null
+  }
+  updateAlbumLoopUI()
   state.currentIndex = findQueueIndex(track.id)
   renderQueue()
   await prepareTrack(track, { play: true })
@@ -1035,7 +1356,7 @@ async function playTrackFromList(track, listKey) {
 
 async function extendRoamQueue() {
   if (state.queueMode !== 'roam') return false
-  const freshTracks = await api.getRoam(8, state.roamMode, state.roamMood)
+  const freshTracks = await api.getRoam(8, state.roamMode)
   const existing = new Set(state.queue.map((track) => track.id))
   const additions = (freshTracks || []).filter(
     (track) => !existing.has(track.id),
@@ -1048,13 +1369,22 @@ async function extendRoamQueue() {
   return true
 }
 
-async function loadRoamQueue({ preservePlaying = false } = {}) {
-  const tracks = await api.getRoam(8, state.roamMode, state.roamMood)
-  const keepCurrent = preservePlaying && state.playing && state.track
+async function loadRoamQueue({
+  preservePlaying = false,
+  preserveCurrent = false,
+} = {}) {
+  const tracks = await api.getRoam(8, state.roamMode)
+  const keepCurrent =
+    Boolean(state.track) &&
+    (preserveCurrent || (preservePlaying && state.playing))
   state.queue = keepCurrent
     ? [state.track, ...tracks.filter((track) => track.id !== state.track.id)]
     : tracks
   state.queueMode = 'roam'
+  state.queueContext = 'roam'
+  state.albumLoop = false
+  state.activeAlbumId = null
+  updateAlbumLoopUI()
   state.sources.roam = state.queue
   state.currentIndex = state.queue.length ? 0 : -1
   renderQueue()
@@ -1064,14 +1394,19 @@ async function loadRoamQueue({ preservePlaying = false } = {}) {
   }
 }
 
+async function returnToRoam() {
+  setView('now')
+  if (state.queueMode === 'roam') return
+  await loadRoamQueue({
+    preservePlaying: true,
+    preserveCurrent: true,
+  })
+  showToast('已切换到漫游模式')
+}
+
 function updateRoamModeUI() {
   $$('[data-roam-mode]').forEach((button) => {
     const active = button.dataset.roamMode === state.roamMode
-    button.classList.toggle('is-active', active)
-    button.setAttribute('aria-pressed', String(active))
-  })
-  $$('[data-roam-mood]').forEach((button) => {
-    const active = button.dataset.roamMood === state.roamMood
     button.classList.toggle('is-active', active)
     button.setAttribute('aria-pressed', String(active))
   })
@@ -1087,23 +1422,11 @@ async function setRoamMode(mode) {
   try {
     await api.setRoamMode(mode)
     await loadRoamQueue({ preservePlaying: true })
+    showToast(
+      mode === 'explore' ? '已切换为探索漫游' : '已切换为持续漫游',
+    )
   } catch (error) {
     state.roamMode = previous
-    updateRoamModeUI()
-    throw error
-  }
-}
-
-async function setRoamMood(mood) {
-  if (!mood || mood === state.roamMood) return
-  const previous = state.roamMood
-  state.roamMood = mood
-  updateRoamModeUI()
-  try {
-    await api.setRoamMood(mood)
-    await loadRoamQueue({ preservePlaying: true })
-  } catch (error) {
-    state.roamMood = previous
     updateRoamModeUI()
     throw error
   }
@@ -1114,6 +1437,24 @@ async function nextTrack({ automatic = false } = {}) {
   if (automatic && state.repeatMode === 'one') {
     audio.currentTime = 0
     await audio.play()
+    return
+  }
+
+  const atLastTrack = state.currentIndex >= state.queue.length - 1
+  if (state.queueContext === 'album' && atLastTrack) {
+    if (state.albumLoop) {
+      await playQueueIndex(0)
+      return
+    }
+    await loadRoamQueue({
+      preservePlaying: true,
+      preserveCurrent: true,
+    })
+    if (state.queue.length > 1) {
+      await playQueueIndex(1)
+    } else if (state.queue.length) {
+      await playQueueIndex(0)
+    }
     return
   }
 
@@ -1141,6 +1482,19 @@ async function nextTrack({ automatic = false } = {}) {
   }
 
   await playQueueIndex(state.currentIndex + 1)
+}
+
+function updateAlbumLoopUI() {
+  const active = state.queueContext === 'album'
+  el.albumLoopButton.hidden = !active
+  el.albumLoopButton.classList.toggle(
+    'is-active',
+    active && state.albumLoop,
+  )
+  el.albumLoopButton.setAttribute(
+    'aria-pressed',
+    String(active && state.albumLoop),
+  )
 }
 
 async function previousTrack() {
@@ -2106,6 +2460,14 @@ function cycleRepeatMode() {
   )
 }
 
+function updateShuffleModeUI() {
+  const label = state.shuffle ? '随机模式' : '顺序模式'
+  el.shuffleButton.classList.toggle('is-active', state.shuffle)
+  el.shuffleButton.dataset.tooltip = label
+  el.shuffleButton.setAttribute('aria-label', label)
+  el.shuffleButton.setAttribute('aria-pressed', String(state.shuffle))
+}
+
 function bindEvents() {
   document.addEventListener(
     'load',
@@ -2167,18 +2529,19 @@ function bindEvents() {
   })
 
   $$('.nav-button').forEach((button) => {
-    button.addEventListener('click', () => setView(button.dataset.nav))
+    button.addEventListener('click', () => {
+      if (button.dataset.nav === 'now') {
+        returnToRoam().catch((error) => {
+          showToast(friendlyError(error))
+        })
+        return
+      }
+      setView(button.dataset.nav)
+    })
   })
   $$('[data-roam-mode]').forEach((button) => {
     button.addEventListener('click', () =>
       setRoamMode(button.dataset.roamMode).catch((error) => {
-        showToast(friendlyError(error))
-      }),
-    )
-  })
-  $$('[data-roam-mood]').forEach((button) => {
-    button.addEventListener('click', () =>
-      setRoamMood(button.dataset.roamMood).catch((error) => {
         showToast(friendlyError(error))
       }),
     )
@@ -2191,10 +2554,14 @@ function bindEvents() {
   el.likeButton.addEventListener('click', toggleLike)
   el.shuffleButton.addEventListener('click', () => {
     state.shuffle = !state.shuffle
-    el.shuffleButton.classList.toggle('is-active', state.shuffle)
-    showToast(state.shuffle ? '随机播放已开启' : '随机播放已关闭')
+    updateShuffleModeUI()
+    showToast(state.shuffle ? '已切换为随机播放' : '已切换为顺序播放')
   })
   el.repeatButton.addEventListener('click', cycleRepeatMode)
+  el.albumLoopButton.addEventListener('click', () => {
+    state.albumLoop = !state.albumLoop
+    updateAlbumLoopUI()
+  })
   el.trackArtist.addEventListener('click', () => openArtist(state.track))
   el.trackAlbum.addEventListener('click', () => openAlbum(state.track))
   el.trackMore.addEventListener('click', (event) => {
@@ -2291,7 +2658,21 @@ function bindEvents() {
   })
   el.equalizerToggle.addEventListener('change', () => {
     state.equalizerEnabled = el.equalizerToggle.checked
+    if (state.equalizerEnabled) state.smartEqualizerEnabled = false
+    el.smartEqualizerToggle.checked = state.smartEqualizerEnabled
     applyEqualizer()
+    saveAudioSettings()
+  })
+  el.smartEqualizerToggle.addEventListener('change', () => {
+    state.smartEqualizerEnabled = el.smartEqualizerToggle.checked
+    if (state.smartEqualizerEnabled) state.equalizerEnabled = false
+    el.equalizerToggle.checked = state.equalizerEnabled
+    applyEqualizer()
+    saveAudioSettings()
+  })
+  el.reverbToggle.addEventListener('change', () => {
+    state.reverbEnabled = el.reverbToggle.checked
+    applyReverb()
     saveAudioSettings()
   })
   el.loudnessToggle.addEventListener('change', async () => {
@@ -2468,10 +2849,15 @@ function applyBootstrapState(bootstrap) {
   state.secondaryEnabled = bootstrap.secondaryEnabled !== false
   state.roamMode =
     bootstrap.roamMode === 'explore' ? 'explore' : 'continuous'
-  state.roamMood = bootstrap.roamMood || 'random'
   state.profile = state.profiles[state.primaryProvider] || null
   state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
+  state.smartEqualizerEnabled =
+    bootstrap.audio?.smartEqualizerEnabled !== false
   state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
+  if (state.smartEqualizerEnabled && state.equalizerEnabled) {
+    state.equalizerEnabled = false
+  }
+  state.reverbEnabled = bootstrap.audio?.reverbEnabled !== false
   if (QUALITY_OPTIONS[bootstrap.audio?.qualityLevel]) {
     state.qualityLevel = bootstrap.audio.qualityLevel
   }
@@ -2494,6 +2880,10 @@ async function applyRoamSnapshot(tracks) {
     ? [current, ...incoming.filter((track) => track.id !== current.id)]
     : incoming
   state.queueMode = 'roam'
+  state.queueContext = 'roam'
+  state.albumLoop = false
+  state.activeAlbumId = null
+  updateAlbumLoopUI()
   state.sources.roam = state.queue
   state.currentIndex = state.queue.length ? 0 : -1
   renderQueue()
@@ -2508,6 +2898,10 @@ async function loadDefaultTrack() {
   const track = { ...BUILT_IN_DEFAULT_TRACK }
   state.queue = [track]
   state.queueMode = 'roam'
+  state.queueContext = 'roam'
+  state.albumLoop = false
+  state.activeAlbumId = null
+  updateAlbumLoopUI()
   state.sources.roam = state.queue
   state.currentIndex = 0
   renderQueue()
@@ -2519,6 +2913,7 @@ async function initialize() {
   initializeAmbientCanvas()
   initializeTextMarquees()
   updatePlayButton()
+  updateShuffleModeUI()
   updateProfileUI()
   renderEqualizerBands()
   renderQueue()

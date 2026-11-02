@@ -54,6 +54,10 @@
       <symbol id="icon-repeat" viewBox="0 0 24 24">
         <path d="M7.5 4.5h7A5.5 5.5 0 0 1 20 10v.9l.8-.8a1 1 0 0 1 1.4 1.42l-2.5 2.5a1 1 0 0 1-1.4 0l-2.5-2.5a1 1 0 1 1 1.4-1.42l.8.8V10a3.5 3.5 0 0 0-3.5-3.5h-7a1 1 0 1 1 0-2Zm-3.9 5.98a1 1 0 0 1 1.4 0l2.5 2.5a1 1 0 1 1-1.4 1.42l-.8-.8V14a3.5 3.5 0 0 0 3.5 3.5h7a1 1 0 1 1 0 2h-7A5.5 5.5 0 0 1 4 14v-.9l-.8.8a1 1 0 0 1-1.4-1.42l2.5-2.5Z" />
       </symbol>
+      <symbol id="icon-album-loop" viewBox="0 0 24 24">
+        <path d="M7.5 4.5h7A5.5 5.5 0 0 1 20 10v.9l.8-.8a1 1 0 0 1 1.4 1.42l-2.5 2.5a1 1 0 0 1-1.4 0l-2.5-2.5a1 1 0 1 1 1.4-1.42l.8.8V10a3.5 3.5 0 0 0-3.5-3.5h-7a1 1 0 1 1 0-2Zm-3.9 5.98a1 1 0 0 1 1.4 0l2.5 2.5a1 1 0 1 1-1.4 1.42l-.8-.8V14a3.5 3.5 0 0 0 3.5 3.5h7a1 1 0 1 1 0 2h-7A5.5 5.5 0 0 1 4 14v-.9l-.8.8a1 1 0 0 1-1.4-1.42l2.5-2.5Z" />
+        <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+      </symbol>
       <symbol id="icon-heart" viewBox="0 0 24 24">
         <path d="M12 20.2s-7.7-4.4-9.7-9.1C1 7.8 3.9 4.2 7.6 5.2c1.7.45 3.1 1.63 4.4 3 1.3-1.37 2.7-2.55 4.4-3 3.7-1 6.6 2.6 5.3 5.9-2 4.7-9.7 9.1-9.7 9.1Z" />
       </symbol>
@@ -183,7 +187,7 @@
                 </div>
 
                 <div class="transport">
-                  <button class="transport-secondary" id="shuffle-button" data-tooltip="随机播放" aria-label="随机播放">
+                  <button class="transport-secondary" id="shuffle-button" data-tooltip="顺序模式" aria-label="顺序模式" aria-pressed="false">
                     <svg><use href="#icon-shuffle"></use></svg>
                   </button>
                   <button class="transport-side" id="prev-button" data-tooltip="上一首" aria-label="上一首">
@@ -195,9 +199,14 @@
                   <button class="transport-side" id="next-button" data-tooltip="下一首" aria-label="下一首">
                     <svg><use href="#icon-next"></use></svg>
                   </button>
-                  <button class="transport-secondary" id="repeat-button" data-tooltip="循环模式" aria-label="循环模式">
-                    <svg><use href="#icon-repeat"></use></svg>
-                  </button>
+                  <div class="transport-loop-actions">
+                    <button class="transport-secondary" id="repeat-button" data-tooltip="循环模式" aria-label="循环模式">
+                      <svg><use href="#icon-repeat"></use></svg>
+                    </button>
+                    <button class="transport-secondary album-loop-button" id="album-loop-button" data-tooltip="专辑循环" aria-label="专辑循环" aria-pressed="false" hidden>
+                      <svg><use href="#icon-album-loop"></use></svg>
+                    </button>
+                  </div>
                 </div>
 
                 <div class="utility-row">
@@ -309,13 +318,23 @@
 
           <div class="equalizer-options">
             <label class="setting-toggle">
+              <span>沉浸声</span>
+              <input id="reverb-toggle" type="checkbox" checked />
+              <i></i>
+            </label>
+            <label class="setting-toggle">
               <span>音量平衡</span>
               <input id="loudness-toggle" type="checkbox" checked />
               <i></i>
             </label>
             <label class="setting-toggle">
+              <span>智能音效</span>
+              <input id="smart-equalizer-toggle" type="checkbox" checked />
+              <i></i>
+            </label>
+            <label class="setting-toggle">
               <span>均衡器</span>
-              <input id="equalizer-toggle" type="checkbox" checked />
+              <input id="equalizer-toggle" type="checkbox" />
               <i></i>
             </label>
           </div>
@@ -400,15 +419,6 @@
         <div class="roam-menu-modes" role="group" aria-label="漫游方式">
           <button class="is-active" data-roam-mode="continuous" aria-pressed="true">持续</button>
           <button data-roam-mode="explore" aria-pressed="false">探索</button>
-        </div>
-        <div class="roam-menu-moods" role="group" aria-label="漫游氛围">
-          <button data-roam-mood="calm" aria-pressed="false">舒缓</button>
-          <button data-roam-mood="cafe" aria-pressed="false">咖啡屋</button>
-          <button data-roam-mood="jazz" aria-pressed="false">爵士</button>
-          <button data-roam-mood="night" aria-pressed="false">深夜</button>
-          <button data-roam-mood="rain" aria-pressed="false">雨天</button>
-          <button data-roam-mood="electronic" aria-pressed="false">轻电子</button>
-          <button class="is-active" data-roam-mood="random" aria-pressed="true">随机</button>
         </div>
       </section>
 

@@ -38,23 +38,6 @@ const QUALITY_LEVELS = new Set([
   'higher',
   'standard',
 ])
-const ROAM_MOODS = new Set([
-  'random',
-  'calm',
-  'cafe',
-  'jazz',
-  'night',
-  'rain',
-  'electronic',
-])
-const ROAM_MOOD_QUERIES = {
-  calm: '舒缓 放松 轻音乐',
-  cafe: '咖啡屋 慵懒 城市',
-  jazz: '爵士 Jazz',
-  night: '深夜 夜晚 氛围',
-  rain: '雨天 安静 氛围',
-  electronic: '轻电子 Chill Electronic',
-}
 const directUrlCache = new Map()
 const artistCache = new Map()
 const artistAlbumsCache = new Map()
@@ -82,11 +65,12 @@ let store = {
   cachedRoam: [],
   windowBounds: null,
   loudnessEnabled: true,
-  equalizerEnabled: true,
+  smartEqualizerEnabled: true,
+  equalizerEnabled: false,
+  reverbEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   qualityLevel: 'auto',
   roamMode: 'continuous',
-  roamMood: 'random',
 }
 const imageCache = new Map()
 let kugouProvider = null
@@ -193,18 +177,21 @@ function loadStore() {
         : store.qualityLevel,
       roamMode:
         raw.roamMode === 'explore' ? 'explore' : 'continuous',
-      roamMood: ROAM_MOODS.has(raw.roamMood) ? raw.roamMood : 'random',
       knownProfiles:
         raw.knownProfiles && typeof raw.knownProfiles === 'object'
           ? raw.knownProfiles
           : {},
       cachedRoam: Array.isArray(raw.cachedRoam) ? raw.cachedRoam : [],
     }
+    if (store.smartEqualizerEnabled && store.equalizerEnabled) {
+      store.equalizerEnabled = false
+    }
     delete store.cookieEncrypted
     delete store.cookiesEncrypted
     delete store.secretsEncrypted
     delete store.secrets
     delete store.cookie
+    delete store.roamMood
   } catch {
     // First launch or an unreadable settings file.
   }
@@ -215,11 +202,12 @@ function saveStore() {
     lastTrack: store.lastTrack,
     windowBounds: store.windowBounds,
     loudnessEnabled: store.loudnessEnabled,
+    smartEqualizerEnabled: store.smartEqualizerEnabled,
     equalizerEnabled: store.equalizerEnabled,
+    reverbEnabled: store.reverbEnabled,
     equalizerBands: store.equalizerBands,
     qualityLevel: store.qualityLevel,
     roamMode: store.roamMode,
-    roamMood: store.roamMood,
     knownProfiles: store.knownProfiles,
     cachedRoam: store.cachedRoam,
     primaryProvider: store.primaryProvider,
@@ -409,10 +397,12 @@ async function getDailySongs() {
     .filter((song) => song.id)
 }
 
-async function getNeteaseRoamSongs(limit = 8) {
+async function getNeteaseRoamSongs(limit = 8, mode = 'FAMILIAR') {
   const requestCount = Math.max(4, Math.min(16, limit * 2))
   const responses = await Promise.allSettled(
-    Array.from({ length: requestCount }, () => apiCall('personal_fm')),
+    Array.from({ length: requestCount }, () =>
+      apiCall('personal_fm_mode', { mode, limit: 3 }),
+    ),
   )
 
   const tracks = []
@@ -432,32 +422,42 @@ async function getNeteaseRoamSongs(limit = 8) {
   return getDailySongs()
 }
 
-function getProviderRoamTracks(provider, limit) {
+function getProviderRoamTracks(provider, limit, mode = 'continuous') {
   if (provider === 'kugou') return kugouProvider.roam(limit)
-  if (provider === 'qq') return qqProvider.roam(limit)
+  if (provider === 'qq') return qqProvider.roam(limit, mode)
   if (provider === 'qishui') return qishuiProvider.roam(limit)
-  return getNeteaseRoamSongs(limit)
+  return getNeteaseRoamSongs(
+    limit,
+    mode === 'explore' ? 'EXPLORE' : 'FAMILIAR',
+  )
 }
 
-async function getMoodRoamTracks(provider, mood, limit) {
-  const query = ROAM_MOOD_QUERIES[mood]
-  if (!query) return getProviderRoamTracks(provider, limit)
-  const tracks = await searchProvider(provider, query).catch(() => [])
-  if (tracks.length) return tracks.slice(0, limit)
-  return getProviderRoamTracks(provider, limit)
+async function getExploreProviderTracks(provider, limit, mode = 'explore') {
+  try {
+    const personalized = await getProviderRoamTracks(provider, limit, mode)
+    if (personalized?.length) return personalized
+  } catch {
+    // Fall back to public discovery when the provider is not logged in.
+  }
+  return searchProvider(provider, '热门音乐').catch(() => [])
 }
 
 async function getRoamTracks(
   limit = 8,
   mode = store.roamMode,
-  mood = store.roamMood,
 ) {
   const count = Math.max(1, Math.min(20, Number(limit) || 8))
-  const selectedMood = ROAM_MOODS.has(mood) ? mood : 'random'
+  if (store.primaryProvider === 'netease') {
+    return getNeteaseRoamSongs(
+      count,
+      mode === 'explore' ? 'EXPLORE' : 'FAMILIAR',
+    )
+  }
+  if (store.primaryProvider === 'qq') {
+    return getProviderRoamTracks('qq', count, mode)
+  }
   if (mode !== 'explore') {
-    return selectedMood === 'random'
-      ? getProviderRoamTracks(store.primaryProvider, count)
-      : getMoodRoamTracks(store.primaryProvider, selectedMood, count)
+    return getProviderRoamTracks(store.primaryProvider, count, mode)
   }
 
   const providers = store.secondaryEnabled
@@ -470,16 +470,11 @@ async function getRoamTracks(
     : [store.primaryProvider]
   const responses = await Promise.allSettled(
     providers.map((provider) =>
-      selectedMood === 'random'
-        ? getProviderRoamTracks(
-            provider,
-            Math.max(4, Math.ceil(count / Math.min(2, providers.length))),
-          )
-        : getMoodRoamTracks(
-            provider,
-            selectedMood,
-            Math.max(4, Math.ceil(count / Math.min(2, providers.length))),
-          ),
+      getExploreProviderTracks(
+        provider,
+        Math.max(4, Math.ceil(count / Math.min(2, providers.length))),
+        'explore',
+      ),
     ),
   )
   const batches = responses
@@ -502,9 +497,7 @@ async function getRoamTracks(
   }
 
   if (tracks.length) return tracks
-  return selectedMood === 'random'
-    ? getProviderRoamTracks(store.primaryProvider, count)
-    : getMoodRoamTracks(store.primaryProvider, selectedMood, count)
+  return getProviderRoamTracks(store.primaryProvider, count, mode)
 }
 
 function decorateLibrary(library, provider) {
@@ -1159,11 +1152,12 @@ function registerIpc() {
       primaryProvider: store.primaryProvider,
       secondaryEnabled: store.secondaryEnabled,
       roamMode: store.roamMode,
-      roamMood: store.roamMood,
       roam: cachedRoam,
       audio: {
         loudnessEnabled: store.loudnessEnabled,
+        smartEqualizerEnabled: store.smartEqualizerEnabled,
         equalizerEnabled: store.equalizerEnabled,
+        reverbEnabled: store.reverbEnabled,
         equalizerBands: store.equalizerBands,
         qualityLevel: store.qualityLevel,
       },
@@ -1173,7 +1167,7 @@ function registerIpc() {
   ipcMain.handle('app:bootstrap-live', async () => {
     const [profiles, roam] = await Promise.all([
       getProviderProfiles(),
-      getRoamTracks(8, store.roamMode, store.roamMood).catch(() => []),
+      getRoamTracks(8, store.roamMode).catch(() => []),
     ])
     if (roam.length) {
       store.cachedRoam = roam.slice(0, 20)
@@ -1185,11 +1179,12 @@ function registerIpc() {
       primaryProvider: store.primaryProvider,
       secondaryEnabled: store.secondaryEnabled,
       roamMode: store.roamMode,
-      roamMood: store.roamMood,
       roam,
       audio: {
         loudnessEnabled: store.loudnessEnabled,
+        smartEqualizerEnabled: store.smartEqualizerEnabled,
         equalizerEnabled: store.equalizerEnabled,
+        reverbEnabled: store.reverbEnabled,
         equalizerBands: store.equalizerBands,
         qualityLevel: store.qualityLevel,
       },
@@ -1201,23 +1196,16 @@ function registerIpc() {
     _event,
     limit,
     mode = store.roamMode,
-    mood = store.roamMood,
   ) =>
     getRoamTracks(
       limit,
       mode === 'explore' ? 'explore' : 'continuous',
-      ROAM_MOODS.has(mood) ? mood : 'random',
     ),
   )
   ipcMain.handle('music:set-roam-mode', (_event, mode) => {
     store.roamMode = mode === 'explore' ? 'explore' : 'continuous'
     saveStore()
     return { roamMode: store.roamMode }
-  })
-  ipcMain.handle('music:set-roam-mood', (_event, mood) => {
-    store.roamMood = ROAM_MOODS.has(mood) ? mood : 'random'
-    saveStore()
-    return { roamMood: store.roamMood }
   })
   ipcMain.handle('music:library', async (_event, force = false) =>
     getLibrary({ force: Boolean(force) }),
@@ -1711,6 +1699,12 @@ function registerIpc() {
     if (typeof settings.equalizerEnabled === 'boolean') {
       store.equalizerEnabled = settings.equalizerEnabled
     }
+    if (typeof settings.smartEqualizerEnabled === 'boolean') {
+      store.smartEqualizerEnabled = settings.smartEqualizerEnabled
+    }
+    if (typeof settings.reverbEnabled === 'boolean') {
+      store.reverbEnabled = settings.reverbEnabled
+    }
     if (
       Array.isArray(settings.equalizerBands) &&
       settings.equalizerBands.length === 10
@@ -1725,7 +1719,9 @@ function registerIpc() {
     saveStore()
     return {
       loudnessEnabled: store.loudnessEnabled,
+      smartEqualizerEnabled: store.smartEqualizerEnabled,
       equalizerEnabled: store.equalizerEnabled,
+      reverbEnabled: store.reverbEnabled,
       equalizerBands: store.equalizerBands,
       qualityLevel: store.qualityLevel,
     }
