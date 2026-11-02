@@ -61,7 +61,7 @@ async function checkForUpdate() {
     const directResponse = await fetchResponse(
       `${LATEST_RELEASE_ROOT}/update.json`,
       { headers: { Accept: 'application/json' } },
-      { attempts: 1, timeout: 10000 },
+      { attempts: 2, timeout: 20000 },
     )
     if (directResponse.status === 404) {
       return {
@@ -141,9 +141,16 @@ async function checkForUpdate() {
 }
 
 async function downloadUpdate(update) {
-  const response = await fetchResponse(update.assetUrl, {
-    headers: { Accept: 'application/octet-stream' },
-  })
+  let response
+  try {
+    response = await fetchResponse(
+      update.assetUrl,
+      { headers: { Accept: 'application/octet-stream' } },
+      { attempts: 1, timeout: 180000 },
+    )
+  } catch {
+    throw new Error('更新文件下载超时，请检查网络后重试')
+  }
   if (!response.ok) {
     throw new Error(`更新下载失败（${response.status}）`)
   }

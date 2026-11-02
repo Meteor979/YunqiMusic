@@ -90,7 +90,7 @@ svg {
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(circle at 20% 0%, rgba(var(--accent-rgb), 0.06), transparent 38%),
+    radial-gradient(circle at 20% 0%, rgba(var(--accent-rgb), 0.11), transparent 42%),
     linear-gradient(145deg, #0d0f13 0%, #08090b 54%, #0b0c0f 100%);
 }
 
@@ -98,6 +98,7 @@ svg {
   position: absolute;
   inset: 0;
   z-index: -2;
+  opacity: 0.92;
   pointer-events: none;
 }
 
@@ -116,8 +117,9 @@ svg {
   position: absolute;
   display: block;
   border-radius: 50%;
-  filter: blur(110px);
-  opacity: 0.72;
+  filter: blur(78px) saturate(1.12);
+  mix-blend-mode: screen;
+  opacity: 0.86;
   will-change: transform;
 }
 
@@ -128,10 +130,10 @@ svg {
   height: 59%;
   background: radial-gradient(
     circle,
-    var(--scene-a, rgba(88, 104, 130, 0.3)) 0%,
+    var(--scene-a, rgba(88, 104, 130, 0.42)) 0%,
     transparent 70%
   );
-  animation: ambient-drift-a 34s ease-in-out infinite alternate;
+  animation: ambient-drift-a 28s ease-in-out infinite alternate;
 }
 
 .blob-b {
@@ -141,10 +143,10 @@ svg {
   height: 65%;
   background: radial-gradient(
     circle,
-    var(--scene-b, rgba(45, 51, 65, 0.28)) 0%,
+    var(--scene-b, rgba(45, 51, 65, 0.36)) 0%,
     transparent 72%
   );
-  animation: ambient-drift-b 41s ease-in-out infinite alternate;
+  animation: ambient-drift-b 34s ease-in-out infinite alternate;
 }
 
 .blob-c {
@@ -154,11 +156,11 @@ svg {
   height: 48%;
   background: radial-gradient(
     circle,
-    var(--scene-c, rgba(74, 86, 108, 0.18)) 0%,
+    var(--scene-c, rgba(74, 86, 108, 0.25)) 0%,
     transparent 70%
   );
-  opacity: 0.46;
-  animation: ambient-drift-c 47s ease-in-out infinite alternate;
+  opacity: 0.62;
+  animation: ambient-drift-c 39s ease-in-out infinite alternate;
 }
 
 .noise {
@@ -172,28 +174,28 @@ svg {
 
 @keyframes ambient-drift-a {
   from {
-    transform: translate3d(-1.5%, -1%, 0) scale(0.98);
+    transform: translate3d(-2%, -1.5%, 0) scale(0.97);
   }
   to {
-    transform: translate3d(3.5%, 2.5%, 0) scale(1.055);
+    transform: translate3d(5%, 3.5%, 0) scale(1.075);
   }
 }
 
 @keyframes ambient-drift-b {
   from {
-    transform: translate3d(2%, 1.5%, 0) scale(1.02);
+    transform: translate3d(2.5%, 2%, 0) scale(1.02);
   }
   to {
-    transform: translate3d(-3%, -2%, 0) scale(1.07);
+    transform: translate3d(-4.5%, -3%, 0) scale(1.085);
   }
 }
 
 @keyframes ambient-drift-c {
   from {
-    transform: translate3d(-2%, 2%, 0) scale(0.97);
+    transform: translate3d(-2.5%, 2.5%, 0) scale(0.96);
   }
   to {
-    transform: translate3d(2.5%, -2.5%, 0) scale(1.07);
+    transform: translate3d(3.5%, -3.5%, 0) scale(1.09);
   }
 }
 
