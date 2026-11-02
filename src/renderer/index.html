@@ -358,6 +358,7 @@
           <div class="primary-platform-switch">
             <button data-primary-provider="netease">网易云</button>
             <button data-primary-provider="kugou">酷狗</button>
+            <button data-primary-provider="qq">QQ 音乐</button>
           </div>
           <button class="provider-account" data-login-provider="netease">
             <span>网易云音乐</span>
@@ -367,25 +368,29 @@
             <span>酷狗音乐</span>
             <small>未登录</small>
           </button>
+          <button class="provider-account" data-login-provider="qq">
+            <span>QQ 音乐</span>
+            <small>未登录</small>
+          </button>
         </div>
         <button class="popover-action" id="login-action">登录当前平台</button>
         <button class="popover-action" id="update-action">检查更新</button>
         <button class="popover-action muted" id="logout-action" hidden>退出登录</button>
       </section>
 
-      <dialog class="login-dialog" id="kugou-login-dialog">
+      <dialog class="login-dialog" id="provider-login-dialog">
         <div class="dialog-glow"></div>
-        <button class="dialog-close" id="kugou-login-close">
+        <button class="dialog-close" id="provider-login-close">
           <svg><use href="#icon-close-small"></use></svg>
         </button>
-        <p class="eyebrow">KUGOU LOGIN</p>
-        <h2>酷狗音乐登录</h2>
+        <p class="eyebrow">MUSIC LOGIN</p>
+        <h2 id="provider-login-title">音乐登录</h2>
         <div class="qr-frame">
-          <img id="kugou-login-qr" alt="酷狗音乐登录二维码" />
-          <div class="qr-loading" id="kugou-login-loading"><span></span></div>
+          <img id="provider-login-qr" alt="音乐登录二维码" />
+          <div class="qr-loading" id="provider-login-loading"><span></span></div>
         </div>
-        <p class="login-status" id="kugou-login-status">正在生成二维码</p>
-        <button class="text-button" id="kugou-login-refresh">刷新二维码</button>
+        <p class="login-status" id="provider-login-status">正在生成二维码</p>
+        <button class="text-button" id="provider-login-refresh">刷新二维码</button>
       </dialog>
 
       <div class="toast-stack" id="toast-stack" aria-live="polite"></div>

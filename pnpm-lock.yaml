@@ -26,6 +26,9 @@ importers:
       pako:
         specifier: ^2.1.0
         version: 2.2.0
+      qqmusic-api-enhanced:
+        specifier: 1.0.8
+        version: 1.0.8
       qrcode:
         specifier: ^1.5.3
         version: 1.5.4
@@ -1158,6 +1161,9 @@ packages:
   pvutils@1.2.0:
     resolution: {integrity: sha512-BbubeCEyTuQjVMakvJQ/Sxbc93F2pwmbsxONT/ZRrwU7Ua38d8unYTwXpTVLAKJ4BDuH9IGztCjQcd/N/39Dvg==}
     engines: {node: '>=16.0.0'}
+
+  qqmusic-api-enhanced@1.0.8:
+    resolution: {integrity: sha512-K7yeg15naBgGJVgE0hskb19eUzZ0nktOVZfdTp2UBm9/MLiFhHGQ5wK6e0c1Nfq6Ac7VdWp5+bqUxDr8L7NrGg==}
 
   qrcode@1.5.4:
     resolution: {integrity: sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==}
@@ -2849,6 +2855,8 @@ snapshots:
       tslib: 2.9.1
 
   pvutils@1.2.0: {}
+
+  qqmusic-api-enhanced@1.0.8: {}
 
   qrcode@1.5.4:
     dependencies:

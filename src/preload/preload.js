@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('yunqi', {
   webLogin: () => invoke('auth:web-login'),
   startKugouQrLogin: () => invoke('auth:kugou-qr-start'),
   checkKugouQrLogin: () => invoke('auth:kugou-qr-check'),
+  startQqQrLogin: () => invoke('auth:qq-qr-start'),
+  checkQqQrLogin: () => invoke('auth:qq-qr-check'),
   setPrimaryProvider: (provider) =>
     invoke('platforms:set-primary', provider),
   setSecondaryEnabled: (enabled) =>

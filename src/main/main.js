@@ -11,6 +11,7 @@ const path = require('path')
 const ncm = require('NeteaseCloudMusicApi')
 const { checkForUpdate, installUpdate } = require('./updater')
 const { createKugouAdapter } = require('./kugou')
+const { createQqAdapter } = require('./qq')
 
 if (process.env.YUNQI_USER_DATA) {
   const userDataPath = path.resolve(process.env.YUNQI_USER_DATA)
@@ -34,6 +35,7 @@ let store = {
   cookies: {
     netease: '',
     kugou: '',
+    qq: '',
   },
   primaryProvider: 'netease',
   secondaryEnabled: true,
@@ -46,6 +48,7 @@ let store = {
 }
 const imageCache = new Map()
 let kugouProvider = null
+let qqProvider = null
 
 function statePath() {
   return path.join(app.getPath('userData'), 'yunqi-state.json')
@@ -102,9 +105,12 @@ function loadStore() {
           legacyCookie ||
           '',
         kugou: storedCookies?.kugou || '',
+        qq: storedCookies?.qq || '',
       },
       primaryProvider:
-        raw.primaryProvider === 'kugou' ? 'kugou' : 'netease',
+        ['netease', 'kugou', 'qq'].includes(raw.primaryProvider)
+          ? raw.primaryProvider
+          : 'netease',
       secondaryEnabled: raw.secondaryEnabled !== false,
       kugouDevice:
         raw.kugouDevice && typeof raw.kugouDevice === 'object'
@@ -224,6 +230,13 @@ function initializeProviderAdapters() {
       saveStore()
     },
   })
+  qqProvider = createQqAdapter({
+    getCookie: () => store.cookies.qq,
+    setCookie: (cookie) => {
+      store.cookies.qq = cookie
+      saveStore()
+    },
+  })
 }
 
 function normalizeArtwork(url) {
@@ -319,6 +332,14 @@ async function getNeteaseRoamSongs(limit = 8) {
 }
 
 async function getLibrary() {
+  if (store.primaryProvider === 'qq') {
+    const library = await qqProvider.getLibrary()
+    return {
+      ...library,
+      provider: 'qq',
+    }
+  }
+
   if (store.primaryProvider === 'kugou') {
     const library = await kugouProvider.getLibrary()
     return {
@@ -411,6 +432,7 @@ async function getNeteaseSongUrl(track) {
 
 async function searchProvider(provider, keywords) {
   if (provider === 'kugou') return kugouProvider.search(keywords)
+  if (provider === 'qq') return qqProvider.search(keywords)
   const body = await apiCall('search', {
     keywords,
     type: 1,
@@ -439,30 +461,40 @@ async function findFallbackTrack(track, provider) {
       const candidateArtist = normalizedMatchText(candidate.artists?.[0])
       return (
         candidateTitle === title &&
-        (!artist || candidateArtist.includes(artist) || artist.includes(candidateArtist))
+        (!artist ||
+          (candidateArtist &&
+            (candidateArtist.includes(artist) ||
+              artist.includes(candidateArtist))))
       )
     }) || null
   )
 }
 
 async function getProviderSongUrl(track) {
-  const direct =
-    track.provider === 'kugou'
-      ? await kugouProvider.songUrl(track)
-      : await getNeteaseSongUrl(track)
+  let direct
+  if (track.provider === 'kugou') direct = await kugouProvider.songUrl(track)
+  else if (track.provider === 'qq') direct = await qqProvider.songUrl(track)
+  else direct = await getNeteaseSongUrl(track)
   if (direct?.url && !direct.limited) return direct
 
   if (
     store.secondaryEnabled &&
     track.provider === store.primaryProvider
   ) {
-    const secondary = store.primaryProvider === 'netease' ? 'kugou' : 'netease'
-    const fallbackTrack = await findFallbackTrack(track, secondary)
-    if (fallbackTrack) {
-      const fallback =
-        secondary === 'kugou'
-          ? await kugouProvider.songUrl(fallbackTrack)
-          : await getNeteaseSongUrl(fallbackTrack)
+    const secondaries = ['netease', 'kugou', 'qq'].filter(
+      (provider) => provider !== store.primaryProvider,
+    )
+    for (const secondary of secondaries) {
+      const fallbackTrack = await findFallbackTrack(track, secondary)
+      if (!fallbackTrack) continue
+      let fallback
+      if (secondary === 'kugou') {
+        fallback = await kugouProvider.songUrl(fallbackTrack)
+      } else if (secondary === 'qq') {
+        fallback = await qqProvider.songUrl(fallbackTrack)
+      } else {
+        fallback = await getNeteaseSongUrl(fallbackTrack)
+      }
       if (fallback?.url) {
         return { ...fallback, fallbackUsed: true }
       }
@@ -473,11 +505,12 @@ async function getProviderSongUrl(track) {
 }
 
 async function getProviderProfiles() {
-  const [netease, kugou] = await Promise.all([
+  const [netease, kugou, qq] = await Promise.all([
     getNeteaseProfile().catch(() => null),
     kugouProvider.getProfile().catch(() => null),
+    qqProvider.getProfile().catch(() => null),
   ])
-  return { netease, kugou }
+  return { netease, kugou, qq }
 }
 
 function registerIpc() {
@@ -487,7 +520,9 @@ function registerIpc() {
       (
         store.primaryProvider === 'kugou'
           ? kugouProvider.roam(8)
-          : getNeteaseRoamSongs(8)
+          : store.primaryProvider === 'qq'
+            ? qqProvider.roam(8)
+            : getNeteaseRoamSongs(8)
       ).catch(() => []),
     ])
     return {
@@ -510,7 +545,9 @@ function registerIpc() {
     return (
       store.primaryProvider === 'kugou'
         ? kugouProvider.roam(count)
-        : getNeteaseRoamSongs(count)
+        : store.primaryProvider === 'qq'
+          ? qqProvider.roam(count)
+          : getNeteaseRoamSongs(count)
     )
   })
   ipcMain.handle('music:library', async () => getLibrary())
@@ -519,28 +556,35 @@ function registerIpc() {
     const keywords = String(query || '').trim().slice(0, 80)
     if (!keywords) return { songs: [], playlists: [] }
 
-    const secondary =
-      store.primaryProvider === 'netease' ? 'kugou' : 'netease'
-    const [primarySongs, secondarySongs, playlistBody] = await Promise.all([
+    const secondaryProviders = store.secondaryEnabled
+      ? ['netease', 'kugou', 'qq'].filter(
+          (provider) => provider !== store.primaryProvider,
+        )
+      : []
+    const [primarySongs, ...secondaryResults] = await Promise.all([
       searchProvider(store.primaryProvider, keywords).catch(() => []),
-      store.secondaryEnabled
-        ? searchProvider(secondary, keywords).catch(() => [])
-        : Promise.resolve([]),
+      ...secondaryProviders.map((provider) =>
+        searchProvider(provider, keywords).catch(() => []),
+      ),
+    ])
+    const [playlistBody] = await Promise.all([
       (
         store.primaryProvider === 'kugou'
           ? kugouProvider.searchPlaylists(keywords)
-          : apiCall('search', {
-              keywords,
-              type: 1000,
-              limit: 12,
-            }).then((body) =>
-              (body.result?.playlists || []).map(normalizeNeteasePlaylist),
-            )
+          : store.primaryProvider === 'qq'
+            ? qqProvider.searchPlaylists(keywords)
+            : apiCall('search', {
+                keywords,
+                type: 1000,
+                limit: 12,
+              }).then((body) =>
+                (body.result?.playlists || []).map(normalizeNeteasePlaylist),
+              )
       ).catch(() => []),
     ])
 
     return {
-      songs: [...primarySongs, ...secondarySongs],
+      songs: [primarySongs, ...secondaryResults].flat(),
       playlists: (playlistBody || []).filter(Boolean),
     }
   })
@@ -548,12 +592,17 @@ function registerIpc() {
   ipcMain.handle('music:playlist', async (_event, unifiedId) => {
     const [provider, ...idParts] = String(unifiedId || '').split(':')
     const playlistId = idParts.join(':')
-    if (!['netease', 'kugou'].includes(provider) || !playlistId) {
+    if (!['netease', 'kugou', 'qq'].includes(provider) || !playlistId) {
       throw new Error('歌单编号无效')
     }
 
     if (provider === 'kugou') {
       const playlist = await kugouProvider.getPlaylist(playlistId)
+      if (!playlist) throw new Error('没有找到这个歌单')
+      return playlist
+    }
+    if (provider === 'qq') {
+      const playlist = await qqProvider.getPlaylist(playlistId)
       if (!playlist) throw new Error('没有找到这个歌单')
       return playlist
     }
@@ -589,6 +638,9 @@ function registerIpc() {
     if (track.provider === 'kugou') {
       return kugouProvider.getLyric(track)
     }
+    if (track.provider === 'qq') {
+      return qqProvider.getLyric(track)
+    }
     const body = await apiCall('lyric', { id: Number(track.providerId) })
     return {
       lrc: body.lrc?.lyric || '',
@@ -600,6 +652,9 @@ function registerIpc() {
   ipcMain.handle('music:like-state', async (_event, track) => {
     if (track.provider === 'kugou') {
       return kugouProvider.getLikeState(track)
+    }
+    if (track.provider === 'qq') {
+      return { liked: false, loggedIn: Boolean(store.cookies.qq) }
     }
     if (!store.cookies.netease) return { liked: false, loggedIn: false }
     try {
@@ -618,6 +673,9 @@ function registerIpc() {
   ipcMain.handle('music:like', async (_event, track, liked) => {
     if (track.provider === 'kugou') {
       return kugouProvider.setLike(track, Boolean(liked))
+    }
+    if (track.provider === 'qq') {
+      throw new Error('QQ 音乐收藏接口暂未接入')
     }
     if (!store.cookies.netease) throw new Error('登录后才能收藏歌曲')
     const body = await apiCall('like', {
@@ -638,6 +696,8 @@ function registerIpc() {
       store.cookies.netease = ''
     } else if (provider === 'kugou') {
       store.cookies.kugou = ''
+    } else if (provider === 'qq') {
+      store.cookies.qq = ''
     }
     saveStore()
     return { ok: true }
@@ -764,7 +824,7 @@ function registerIpc() {
   })
 
   ipcMain.handle('platforms:set-primary', async (_event, provider) => {
-    if (!['netease', 'kugou'].includes(provider)) {
+    if (!['netease', 'kugou', 'qq'].includes(provider)) {
       throw new Error('不支持的音乐平台')
     }
     store.primaryProvider = provider
@@ -789,6 +849,16 @@ function registerIpc() {
   ipcMain.handle('auth:kugou-qr-check', async () => {
     if (!kugouProvider) initializeProviderAdapters()
     return kugouProvider.checkQrLogin()
+  })
+
+  ipcMain.handle('auth:qq-qr-start', async () => {
+    if (!qqProvider) initializeProviderAdapters()
+    return qqProvider.startQrLogin()
+  })
+
+  ipcMain.handle('auth:qq-qr-check', async () => {
+    if (!qqProvider) initializeProviderAdapters()
+    return qqProvider.checkQrLogin()
   })
 
   ipcMain.handle('app:remember-track', (_event, track) => {

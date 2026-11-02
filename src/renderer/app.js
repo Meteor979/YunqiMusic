@@ -10,6 +10,7 @@ const state = {
   profiles: {
     netease: null,
     kugou: null,
+    qq: null,
   },
   primaryProvider: 'netease',
   secondaryEnabled: true,
@@ -42,8 +43,9 @@ const state = {
   urlCache: new Map(),
   updateInfo: null,
   checkingUpdate: false,
-  kugouQrTimer: null,
-  kugouQrBusy: false,
+  loginQrTimer: null,
+  loginQrBusy: false,
+  loginQrProvider: '',
 }
 
 const el = {
@@ -78,10 +80,11 @@ const el = {
   loginAction: $('#login-action'),
   updateAction: $('#update-action'),
   logoutAction: $('#logout-action'),
-  kugouLoginDialog: $('#kugou-login-dialog'),
-  kugouLoginQr: $('#kugou-login-qr'),
-  kugouLoginLoading: $('#kugou-login-loading'),
-  kugouLoginStatus: $('#kugou-login-status'),
+  providerLoginDialog: $('#provider-login-dialog'),
+  providerLoginTitle: $('#provider-login-title'),
+  providerLoginQr: $('#provider-login-qr'),
+  providerLoginLoading: $('#provider-login-loading'),
+  providerLoginStatus: $('#provider-login-status'),
   searchInput: $('#search-input'),
   searchResults: $('#search-results'),
   libraryContent: $('#library-content'),
@@ -110,6 +113,7 @@ const icons = {
 const PROVIDER_LABELS = {
   netease: '网易云',
   kugou: '酷狗',
+  qq: 'QQ 音乐',
 }
 
 const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -877,7 +881,7 @@ function updateProfileUI() {
     )
   })
 
-  for (const provider of ['netease', 'kugou']) {
+  for (const provider of ['netease', 'kugou', 'qq']) {
     const account = state.profiles[provider]
     const button = $(`[data-login-provider="${provider}"]`)
     const status = button?.querySelector('small')
@@ -1240,76 +1244,90 @@ async function handleUpdateAction() {
   }
 }
 
-function closeKugouQrTimer() {
-  if (state.kugouQrTimer) {
-    window.clearTimeout(state.kugouQrTimer)
-    state.kugouQrTimer = null
+function closeProviderQrTimer() {
+  if (state.loginQrTimer) {
+    window.clearTimeout(state.loginQrTimer)
+    state.loginQrTimer = null
   }
-  state.kugouQrBusy = false
+  state.loginQrBusy = false
 }
 
-function closeKugouLoginDialog() {
-  closeKugouQrTimer()
-  if (el.kugouLoginDialog.open) el.kugouLoginDialog.close()
+function closeProviderLoginDialog() {
+  closeProviderQrTimer()
+  if (el.providerLoginDialog.open) el.providerLoginDialog.close()
 }
 
-async function startKugouQrLogin() {
-  closeKugouQrTimer()
-  el.kugouLoginQr.removeAttribute('src')
-  el.kugouLoginLoading.hidden = false
-  el.kugouLoginStatus.textContent = '正在生成二维码'
+async function startProviderQrLogin(provider = state.loginQrProvider) {
+  if (!['kugou', 'qq'].includes(provider)) return
+  state.loginQrProvider = provider
+  closeProviderQrTimer()
+  el.providerLoginTitle.textContent = `${PROVIDER_LABELS[provider]}登录`
+  el.providerLoginQr.removeAttribute('src')
+  el.providerLoginLoading.hidden = false
+  el.providerLoginStatus.textContent = '正在生成二维码'
 
   try {
-    const result = await api.startKugouQrLogin()
-    el.kugouLoginQr.src = result.image
-    el.kugouLoginLoading.hidden = true
-    el.kugouLoginStatus.textContent = '等待扫码'
+    const result =
+      provider === 'kugou'
+        ? await api.startKugouQrLogin()
+        : await api.startQqQrLogin()
+    el.providerLoginQr.src = result.image
+    el.providerLoginLoading.hidden = true
+    el.providerLoginStatus.textContent = '等待扫码'
 
     const poll = async () => {
-      if (!el.kugouLoginDialog.open || state.kugouQrBusy) return
-      state.kugouQrBusy = true
+      if (!el.providerLoginDialog.open || state.loginQrBusy) return
+      state.loginQrBusy = true
       try {
-        const status = await api.checkKugouQrLogin()
-        if (status.code === 4) {
-          state.profiles.kugou = status.profile
+        const status =
+          provider === 'kugou'
+            ? await api.checkKugouQrLogin()
+            : await api.checkQqQrLogin()
+        const success =
+          provider === 'kugou' ? status.code === 4 : status.code === 200
+        if (success && status.profile) {
+          state.profiles[provider] = status.profile
           updateProfileUI()
-          closeKugouLoginDialog()
-          showToast(`已登录酷狗音乐：${status.profile?.name || ''}`)
-          if (state.primaryProvider === 'kugou') {
+          closeProviderLoginDialog()
+          showToast(
+            `已登录${PROVIDER_LABELS[provider]}：${status.profile.name || ''}`,
+          )
+          if (state.primaryProvider === provider) {
             refreshLibrary(false)
             loadRoamQueue({ preservePlaying: true }).catch(() => {})
           }
           return
         }
-        el.kugouLoginStatus.textContent =
+        el.providerLoginStatus.textContent =
           status.message || '等待扫码'
-        if (status.code === 0) return
-        state.kugouQrTimer = window.setTimeout(poll, 1500)
+        if (status.code === 0 || status.code === 800) return
+        state.loginQrTimer = window.setTimeout(poll, 1500)
       } catch (error) {
-        el.kugouLoginStatus.textContent = friendlyError(error)
-        if (el.kugouLoginDialog.open) {
-          state.kugouQrTimer = window.setTimeout(poll, 2500)
+        el.providerLoginStatus.textContent = friendlyError(error)
+        if (el.providerLoginDialog.open) {
+          state.loginQrTimer = window.setTimeout(poll, 2500)
         }
       } finally {
-        state.kugouQrBusy = false
+        state.loginQrBusy = false
       }
     }
-    state.kugouQrTimer = window.setTimeout(poll, 1200)
+    state.loginQrTimer = window.setTimeout(poll, 1200)
   } catch (error) {
-    el.kugouLoginLoading.hidden = true
-    el.kugouLoginStatus.textContent = friendlyError(error)
+    el.providerLoginLoading.hidden = true
+    el.providerLoginStatus.textContent = friendlyError(error)
   }
 }
 
-async function openKugouLoginDialog() {
-  if (!el.kugouLoginDialog.open) el.kugouLoginDialog.showModal()
-  await startKugouQrLogin()
+async function openProviderLoginDialog(provider) {
+  state.loginQrProvider = provider
+  if (!el.providerLoginDialog.open) el.providerLoginDialog.showModal()
+  await startProviderQrLogin(provider)
 }
 
 async function loginProvider(provider = state.primaryProvider) {
   setProfileOpen(false)
-  if (provider === 'kugou') {
-    await openKugouLoginDialog()
+  if (provider === 'kugou' || provider === 'qq') {
+    await openProviderLoginDialog(provider)
     return
   }
 
@@ -1509,10 +1527,15 @@ function bindEvents() {
   $('#equalizer-reset').addEventListener('click', () =>
     setEqualizerPreset('flat'),
   )
-  $('#kugou-login-close').addEventListener('click', closeKugouLoginDialog)
-  $('#kugou-login-refresh').addEventListener('click', startKugouQrLogin)
-  el.kugouLoginDialog.addEventListener('close', closeKugouQrTimer)
-  el.kugouLoginDialog.addEventListener('cancel', closeKugouQrTimer)
+  $('#provider-login-close').addEventListener(
+    'click',
+    closeProviderLoginDialog,
+  )
+  $('#provider-login-refresh').addEventListener('click', () =>
+    startProviderQrLogin(),
+  )
+  el.providerLoginDialog.addEventListener('close', closeProviderQrTimer)
+  el.providerLoginDialog.addEventListener('cancel', closeProviderQrTimer)
 
   el.profileButton.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -1592,7 +1615,7 @@ function bindEvents() {
       setQueueOpen(false)
       setEqualizerOpen(false)
       setProfileOpen(false)
-      closeKugouLoginDialog()
+      closeProviderLoginDialog()
       return
     }
     if (typing) return
@@ -1627,6 +1650,7 @@ async function initialize() {
     state.profiles = {
       netease: null,
       kugou: null,
+      qq: null,
       ...(bootstrap.profiles || {}),
     }
     state.primaryProvider = bootstrap.primaryProvider || 'netease'
