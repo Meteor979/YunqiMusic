@@ -552,26 +552,6 @@ svg {
   }
 }
 
-.eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 9px;
-  color: var(--text-faint);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-}
-
-.live-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 11px rgba(var(--accent-rgb), 0.8);
-}
-
 .now-heading {
   display: flex;
   align-items: flex-end;
@@ -2300,10 +2280,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .dialog-close svg {
   width: 16px;
   height: 16px;
-}
-
-.login-dialog .eyebrow {
-  justify-content: center;
 }
 
 .login-dialog h2 {

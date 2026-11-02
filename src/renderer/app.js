@@ -1201,7 +1201,6 @@ function renderPlaylist(playlist) {
         ${playlist.cover ? `<img src="${escapeHTML(playlist.cover)}" alt="" />` : ''}
       </div>
       <div class="playlist-meta">
-        <p class="eyebrow">${PROVIDER_LABELS[playlist.provider] || 'PLAYLIST'} PLAYLIST</p>
         <h1>${escapeHTML(playlist.name)}</h1>
         ${playlist.description ? `<p class="playlist-description">${escapeHTML(playlist.description)}</p>` : ''}
         <div class="playlist-facts">
