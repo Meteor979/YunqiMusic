@@ -9,7 +9,8 @@ contextBridge.exposeInMainWorld('yunqi', {
   getLibrary: () => invoke('music:library'),
   search: (query) => invoke('music:search', query),
   getPlaylist: (id) => invoke('music:playlist', id),
-  getSongUrl: (track) => invoke('music:url', track),
+  getSongUrl: (track, qualityLevel) =>
+    invoke('music:url', track, qualityLevel),
   getLyric: (track) => invoke('music:lyric', track),
   getLikeState: (track) => invoke('music:like-state', track),
   setLike: (track, liked) => invoke('music:like', track, liked),

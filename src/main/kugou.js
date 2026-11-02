@@ -280,14 +280,18 @@ function createKugouAdapter({
       .filter(Boolean)
   }
 
-  async function songUrl(track) {
+  async function songUrl(track, qualityLevel = 'auto') {
     await ensureDeviceRegistered()
     let latestError = null
     const account = parseCookie(getCookie())
-    const qualityOrder =
-      account.token && Number(account.vip_type || 0) > 0
-        ? ['flac', '320', '128']
-        : ['128']
+    const hasVip = account.token && Number(account.vip_type || 0) > 0
+    const qualityOrder = !hasVip
+      ? ['128']
+      : qualityLevel === 'standard'
+        ? ['128']
+        : qualityLevel === 'exhigh' || qualityLevel === 'higher'
+          ? ['320', '128']
+          : ['flac', '320', '128']
     for (const quality of qualityOrder) {
       try {
         const response = await call(modules.songUrl, {

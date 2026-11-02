@@ -29,6 +29,15 @@ const COOKIE_ATTRIBUTES = new Set([
   'secure',
   'httponly',
 ])
+const QUALITY_LEVELS = new Set([
+  'auto',
+  'jymaster',
+  'hires',
+  'lossless',
+  'exhigh',
+  'higher',
+  'standard',
+])
 
 let mainWindow = null
 let webLoginTask = null
@@ -48,6 +57,7 @@ let store = {
   loudnessEnabled: true,
   equalizerEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  qualityLevel: 'auto',
 }
 const imageCache = new Map()
 let kugouProvider = null
@@ -149,6 +159,9 @@ function loadStore() {
               Math.max(-12, Math.min(12, Number(value) || 0)),
             )
           : store.equalizerBands,
+      qualityLevel: QUALITY_LEVELS.has(raw.qualityLevel)
+        ? raw.qualityLevel
+        : store.qualityLevel,
     }
     delete store.cookieEncrypted
     delete store.cookiesEncrypted
@@ -167,6 +180,7 @@ function saveStore() {
     loudnessEnabled: store.loudnessEnabled,
     equalizerEnabled: store.equalizerEnabled,
     equalizerBands: store.equalizerBands,
+    qualityLevel: store.qualityLevel,
     primaryProvider: store.primaryProvider,
     secondaryEnabled: store.secondaryEnabled,
     kugouDevice: store.kugouDevice,
@@ -440,8 +454,20 @@ async function getLibrary() {
   }
 }
 
-async function getNeteaseSongUrl(track) {
-  const levels = ['jymaster', 'hires', 'lossless', 'exhigh', 'standard']
+async function getNeteaseSongUrl(track, qualityLevel = 'auto') {
+  const automaticLevels = [
+    'jymaster',
+    'hires',
+    'lossless',
+    'exhigh',
+    'higher',
+    'standard',
+  ]
+  const levels =
+    qualityLevel === 'auto'
+      ? automaticLevels
+      : automaticLevels.slice(automaticLevels.indexOf(qualityLevel))
+  if (!levels.length) levels.push('standard')
   let trialFallback = null
 
   for (const level of levels) {
@@ -525,12 +551,17 @@ async function findFallbackTrack(track, provider) {
   )
 }
 
-async function getProviderSongUrl(track) {
+async function getProviderSongUrl(track, qualityLevel = 'auto') {
   let direct
-  if (track.provider === 'kugou') direct = await kugouProvider.songUrl(track)
-  else if (track.provider === 'qq') direct = await qqProvider.songUrl(track)
-  else if (track.provider === 'qishui') direct = await qishuiProvider.songUrl(track)
-  else direct = await getNeteaseSongUrl(track)
+  if (track.provider === 'kugou') {
+    direct = await kugouProvider.songUrl(track, qualityLevel)
+  } else if (track.provider === 'qq') {
+    direct = await qqProvider.songUrl(track, qualityLevel)
+  } else if (track.provider === 'qishui') {
+    direct = await qishuiProvider.songUrl(track, qualityLevel)
+  } else {
+    direct = await getNeteaseSongUrl(track, qualityLevel)
+  }
   if (direct?.url && !direct.limited) return direct
 
   if (
@@ -545,13 +576,13 @@ async function getProviderSongUrl(track) {
       if (!fallbackTrack) continue
       let fallback
       if (secondary === 'kugou') {
-        fallback = await kugouProvider.songUrl(fallbackTrack)
+        fallback = await kugouProvider.songUrl(fallbackTrack, qualityLevel)
       } else if (secondary === 'qq') {
-        fallback = await qqProvider.songUrl(fallbackTrack)
+        fallback = await qqProvider.songUrl(fallbackTrack, qualityLevel)
       } else if (secondary === 'qishui') {
-        fallback = await qishuiProvider.songUrl(fallbackTrack)
+        fallback = await qishuiProvider.songUrl(fallbackTrack, qualityLevel)
       } else {
-        fallback = await getNeteaseSongUrl(fallbackTrack)
+        fallback = await getNeteaseSongUrl(fallbackTrack, qualityLevel)
       }
       if (fallback?.url) {
         return { ...fallback, fallbackUsed: true }
@@ -596,6 +627,7 @@ function registerIpc() {
         loudnessEnabled: store.loudnessEnabled,
         equalizerEnabled: store.equalizerEnabled,
         equalizerBands: store.equalizerBands,
+        qualityLevel: store.qualityLevel,
       },
     }
   })
@@ -694,11 +726,14 @@ function registerIpc() {
     return playlist
   })
 
-  ipcMain.handle('music:url', async (_event, track) => {
+  ipcMain.handle('music:url', async (_event, track, qualityLevel = 'auto') => {
     if (!track?.provider || !track?.providerId) {
       throw new Error('歌曲编号无效')
     }
-    return getProviderSongUrl(track)
+    return getProviderSongUrl(
+      track,
+      QUALITY_LEVELS.has(qualityLevel) ? qualityLevel : 'auto',
+    )
   })
 
   ipcMain.handle('music:lyric', async (_event, track) => {
@@ -973,11 +1008,15 @@ function registerIpc() {
         Math.max(-12, Math.min(12, Number(value) || 0)),
       )
     }
+    if (QUALITY_LEVELS.has(settings.qualityLevel)) {
+      store.qualityLevel = settings.qualityLevel
+    }
     saveStore()
     return {
       loudnessEnabled: store.loudnessEnabled,
       equalizerEnabled: store.equalizerEnabled,
       equalizerBands: store.equalizerBands,
+      qualityLevel: store.qualityLevel,
     }
   })
 

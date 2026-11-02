@@ -81,9 +81,6 @@
       <symbol id="icon-plus" viewBox="0 0 24 24">
         <path d="M11 5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5Z" />
       </symbol>
-      <symbol id="icon-wifi" viewBox="0 0 24 24">
-        <path d="M12 17.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm-4.38-3.72a6.2 6.2 0 0 1 8.76 0 1 1 0 0 0 1.42-1.42 8.2 8.2 0 0 0-11.6 0 1 1 0 0 0 1.42 1.42Zm-3.32-3.3a10.8 10.8 0 0 1 15.4 0 1 1 0 1 0 1.42-1.42 12.8 12.8 0 0 0-18.24 0 1 1 0 0 0 1.42 1.42Z" />
-      </symbol>
     </svg>
 
     <div class="app-shell" id="app">
@@ -154,10 +151,6 @@
               <div>
                 <h1>漫游</h1>
               </div>
-              <div class="sound-quality">
-                <svg><use href="#icon-wifi"></use></svg>
-                <span id="quality-label">高音质</span>
-              </div>
             </div>
 
             <div class="now-grid">
@@ -175,11 +168,13 @@
 
                 <div class="track-copy">
                   <div class="track-title-row">
-                    <div>
-                      <h2 id="track-name"></h2>
+                    <div class="track-title-block">
+                      <div class="track-title-viewport" id="track-title-viewport">
+                        <h2 id="track-name"></h2>
+                      </div>
                       <p id="track-artist"></p>
                     </div>
-                    <button class="icon-button" id="track-more" data-tooltip="更多" aria-label="更多">
+                    <button class="icon-button" id="track-more" data-tooltip="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false">
                       <svg><use href="#icon-more"></use></svg>
                     </button>
                   </div>
@@ -381,6 +376,32 @@
         <button class="popover-action" id="login-action">登录当前平台</button>
         <button class="popover-action" id="update-action">检查更新</button>
         <button class="popover-action muted" id="logout-action" hidden>退出登录</button>
+      </section>
+
+      <section class="track-menu" id="track-menu" role="menu" aria-hidden="true" aria-label="更多">
+        <div class="track-menu-label">音质</div>
+        <button class="track-menu-option is-active" data-quality-level="auto" role="menuitemradio" aria-checked="true">
+          <span>自动</span>
+          <small>最高可用</small>
+        </button>
+        <button class="track-menu-option" data-quality-level="jymaster" role="menuitemradio" aria-checked="false">
+          <span>超清母带</span>
+        </button>
+        <button class="track-menu-option" data-quality-level="hires" role="menuitemradio" aria-checked="false">
+          <span>Hi-Res</span>
+        </button>
+        <button class="track-menu-option" data-quality-level="lossless" role="menuitemradio" aria-checked="false">
+          <span>无损</span>
+        </button>
+        <button class="track-menu-option" data-quality-level="exhigh" role="menuitemradio" aria-checked="false">
+          <span>极高</span>
+        </button>
+        <button class="track-menu-option" data-quality-level="higher" role="menuitemradio" aria-checked="false">
+          <span>较高</span>
+        </button>
+        <button class="track-menu-option" data-quality-level="standard" role="menuitemradio" aria-checked="false">
+          <span>标准</span>
+        </button>
       </section>
 
       <dialog class="login-dialog" id="provider-login-dialog">

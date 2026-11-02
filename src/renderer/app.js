@@ -35,6 +35,7 @@ const state = {
   loudnessEnabled: true,
   equalizerEnabled: true,
   equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  qualityLevel: 'auto',
   trackLoudnessDb: 0,
   playbackUrls: [],
   playbackUrlIndex: 0,
@@ -55,6 +56,7 @@ const el = {
   albumCover: $('#album-cover'),
   coverStage: $('#cover-stage'),
   trackName: $('#track-name'),
+  trackTitleViewport: $('#track-title-viewport'),
   trackArtist: $('#track-artist'),
   trackAlbum: $('#track-album'),
   titlebarNow: $('#titlebar-now'),
@@ -89,7 +91,8 @@ const el = {
   searchResults: $('#search-results'),
   libraryContent: $('#library-content'),
   playlistContent: $('#playlist-content'),
-  quality: $('#quality-label'),
+  trackMenu: $('#track-menu'),
+  trackMore: $('#track-more'),
   likeButton: $('#like-button'),
   shuffleButton: $('#shuffle-button'),
   repeatButton: $('#repeat-button'),
@@ -126,6 +129,15 @@ const EQ_PRESETS = {
   vocal: [-1, -0.5, 0, 1, 2, 2.5, 2, 1, 0, -1],
   bass: [4, 3.5, 2.5, 1.5, 0, -0.5, -1, -0.5, 0, 0.5],
 }
+const QUALITY_OPTIONS = {
+  auto: '自动',
+  jymaster: '超清母带',
+  hires: 'Hi-Res',
+  lossless: '无损',
+  exhigh: '极高',
+  higher: '较高',
+  standard: '标准',
+}
 
 let audioContext = null
 let mediaSource = null
@@ -136,6 +148,9 @@ let saveAudioTimer = null
 let tooltipTarget = null
 let tooltipTimer = null
 let ambientSceneIndex = 0
+let ambientTransitionBusy = false
+let ambientTransitionTimer = null
+let pendingAmbientPalette = null
 
 function escapeHTML(value = '') {
   return String(value)
@@ -171,29 +186,6 @@ function formatCount(value) {
 
 function providerBadge(provider) {
   return `<i class="provider-badge">${PROVIDER_LABELS[provider] || '音乐'}</i>`
-}
-
-function formatQuality(result) {
-  const levelNames = {
-    jymaster: '超清母带',
-    hires: 'Hi-Res',
-    lossless: '无损',
-    exhigh: '极高',
-    higher: '较高',
-    standard: '标准',
-  }
-  const level = levelNames[result.level] || result.level || '高音质'
-  const type = String(result.type || '').toUpperCase()
-  const bitrate = result.bitrate
-    ? result.bitrate >= 1000000
-      ? `${(result.bitrate / 1000000).toFixed(2)} Mbps`
-      : `${Math.round(result.bitrate / 1000)} kbps`
-    : ''
-
-  const source = result.sourceProvider
-    ? `${PROVIDER_LABELS[result.sourceProvider]}${result.fallbackUsed ? '补源' : ''}`
-    : ''
-  return [source, level, type, bitrate].filter(Boolean).join(' · ')
 }
 
 function friendlyError(error) {
@@ -341,6 +333,7 @@ function saveAudioSettings() {
         loudnessEnabled: state.loudnessEnabled,
         equalizerEnabled: state.equalizerEnabled,
         equalizerBands: state.equalizerBands,
+        qualityLevel: state.qualityLevel,
       })
       .catch(() => {})
   }, 250)
@@ -408,6 +401,29 @@ function updatePlayButton() {
   el.app.classList.toggle('is-playing', state.playing)
 }
 
+function updateTrackTitleMotion() {
+  const viewport = el.trackTitleViewport
+  viewport.classList.remove('is-overflowing')
+  if (!state.track?.name) {
+    viewport.style.removeProperty('--title-shift')
+    viewport.style.removeProperty('--title-duration')
+    return
+  }
+
+  const titleWidth = Math.ceil(el.trackName.getBoundingClientRect().width)
+  const availableWidth = viewport.clientWidth
+  if (!availableWidth || titleWidth <= availableWidth - 16) return
+
+  const shift = availableWidth - titleWidth
+  const distance = titleWidth - availableWidth
+  const duration = Math.max(24, Math.min(46, 22 + distance / 45))
+  viewport.style.setProperty('--title-shift', `${shift}px`)
+  viewport.style.setProperty('--title-duration', `${duration}s`)
+  requestAnimationFrame(() => {
+    if (state.track?.name) viewport.classList.add('is-overflowing')
+  })
+}
+
 function updateTrackUI(track) {
   state.track = track
   el.trackName.textContent = track?.name || ''
@@ -447,6 +463,7 @@ function updateTrackUI(track) {
   el.currentTime.textContent = '0:00'
   el.totalTime.textContent = formatTime((track?.duration || 0) / 1000)
   el.likeButton.classList.toggle('is-active', state.liked)
+  requestAnimationFrame(updateTrackTitleMotion)
 
   if (window.mediaSession && 'MediaMetadata' in window) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -574,12 +591,17 @@ function hslToRgb(h, s, l) {
 
 function transitionAmbientPalette(hue, saturation) {
   if (!el.ambientScenes.length) return
+  pendingAmbientPalette = { hue, saturation }
+  if (ambientTransitionBusy) return
+  const nextPalette = pendingAmbientPalette
+  pendingAmbientPalette = null
+
   const nextIndex = ambientSceneIndex === 0 ? 1 : 0
   const current = el.ambientScenes[ambientSceneIndex]
   const next = el.ambientScenes[nextIndex]
-  const colorA = hslToRgb(hue, saturation * 0.9, 0.52)
-  const colorB = hslToRgb(hue + 24, saturation * 0.8, 0.43)
-  const colorC = hslToRgb(hue - 20, saturation * 0.65, 0.5)
+  const colorA = hslToRgb(nextPalette.hue, nextPalette.saturation * 0.9, 0.52)
+  const colorB = hslToRgb(nextPalette.hue + 24, nextPalette.saturation * 0.8, 0.43)
+  const colorC = hslToRgb(nextPalette.hue - 20, nextPalette.saturation * 0.65, 0.5)
 
   next.style.setProperty('--scene-a', `rgba(${colorA.join(', ')}, 0.44)`)
   next.style.setProperty('--scene-b', `rgba(${colorB.join(', ')}, 0.36)`)
@@ -587,6 +609,17 @@ function transitionAmbientPalette(hue, saturation) {
   next.classList.add('is-active')
   current.classList.remove('is-active')
   ambientSceneIndex = nextIndex
+  ambientTransitionBusy = true
+
+  if (ambientTransitionTimer) window.clearTimeout(ambientTransitionTimer)
+  ambientTransitionTimer = window.setTimeout(() => {
+    ambientTransitionBusy = false
+    ambientTransitionTimer = null
+    if (!pendingAmbientPalette) return
+    const pending = pendingAmbientPalette
+    pendingAmbientPalette = null
+    transitionAmbientPalette(pending.hue, pending.saturation)
+  }, 2800)
 }
 
 function applyPaletteFromColor(r, g, b, { ambient = true } = {}) {
@@ -730,7 +763,7 @@ async function resolveSongUrl(track) {
   const cached = state.urlCache.get(track.id)
   if (cached && cached.expiresAt > Date.now()) return cached.value
 
-  const value = await api.getSongUrl(track)
+  const value = await api.getSongUrl(track, state.qualityLevel)
   if (value?.url) {
     state.urlCache.set(track.id, {
       value,
@@ -768,7 +801,6 @@ async function startPlayback(track = state.track, token = state.loadToken) {
     state.playbackUrlIndex = 0
     applyLoudnessNormalization()
     audio.src = result.url
-    el.quality.textContent = formatQuality(result)
 
     await audio.play()
     if (result.limited) showToast('这首歌目前仅能试听部分片段')
@@ -1248,19 +1280,98 @@ function renderQueue() {
   el.queueEmpty.classList.toggle('is-visible', state.queue.length === 0)
 }
 
+function setTrackMenuOpen(open) {
+  if (open) {
+    setEqualizerOpen(false)
+    setQueueOpen(false)
+    setProfileOpen(false)
+    el.trackMenu.classList.add('is-open')
+    el.trackMenu.setAttribute('aria-hidden', 'false')
+    el.trackMore.setAttribute('aria-expanded', 'true')
+
+    const anchor = el.trackMore.getBoundingClientRect()
+    const menuWidth = el.trackMenu.offsetWidth
+    const menuHeight = el.trackMenu.offsetHeight
+    const margin = 12
+    const gap = 8
+    const left = Math.max(
+      margin,
+      Math.min(
+        anchor.right - menuWidth,
+        window.innerWidth - menuWidth - margin,
+      ),
+    )
+    const preferredTop = anchor.bottom + gap
+    const top =
+      preferredTop + menuHeight <= window.innerHeight - margin
+        ? preferredTop
+        : Math.max(margin, anchor.top - menuHeight - gap)
+    el.trackMenu.style.left = `${Math.round(left)}px`
+    el.trackMenu.style.top = `${Math.round(top)}px`
+    return
+  }
+
+  el.trackMenu.classList.remove('is-open')
+  el.trackMenu.setAttribute('aria-hidden', 'true')
+  el.trackMore.setAttribute('aria-expanded', 'false')
+}
+
+function updateQualityMenuSelection() {
+  for (const button of $$('#track-menu [data-quality-level]')) {
+    const selected = button.dataset.qualityLevel === state.qualityLevel
+    button.classList.toggle('is-active', selected)
+    button.setAttribute('aria-checked', String(selected))
+  }
+}
+
+async function setQualityLevel(level) {
+  if (!QUALITY_OPTIONS[level] || level === state.qualityLevel) {
+    setTrackMenuOpen(false)
+    return
+  }
+
+  state.qualityLevel = level
+  updateQualityMenuSelection()
+  saveAudioSettings()
+  setTrackMenuOpen(false)
+
+  const wasPlaying = Boolean(audio.src) && !audio.paused
+  const resumeAt = audio.currentTime
+  state.urlCache.clear()
+  audio.pause()
+  audio.removeAttribute('src')
+  delete audio.dataset.trackId
+
+  if (wasPlaying && state.track) {
+    await startPlayback(state.track, state.loadToken)
+    if (resumeAt > 0 && Number.isFinite(audio.duration)) {
+      audio.currentTime = Math.min(resumeAt, audio.duration)
+    }
+  }
+
+  showToast(`音质偏好已设为 ${QUALITY_OPTIONS[level]}`)
+}
+
 function setQueueOpen(open) {
-  if (open) setEqualizerOpen(false)
+  if (open) {
+    setEqualizerOpen(false)
+    setTrackMenuOpen(false)
+  }
   el.queuePanel.classList.toggle('is-open', open)
   el.queuePanel.setAttribute('aria-hidden', open ? 'false' : 'true')
 }
 
 function setEqualizerOpen(open) {
-  if (open) setQueueOpen(false)
+  if (open) {
+    setQueueOpen(false)
+    setTrackMenuOpen(false)
+  }
   el.equalizerPanel.classList.toggle('is-open', open)
   el.equalizerPanel.setAttribute('aria-hidden', open ? 'false' : 'true')
 }
 
 function setProfileOpen(open) {
+  if (open) setTrackMenuOpen(false)
   el.popover.classList.toggle('is-open', open)
   el.popover.setAttribute('aria-hidden', open ? 'false' : 'true')
   el.popoverBackdrop.classList.toggle('is-visible', open)
@@ -1503,8 +1614,19 @@ function bindEvents() {
   document.addEventListener('focusout', hideTooltip)
   document.addEventListener('click', hideTooltip)
   window.addEventListener('blur', hideTooltip)
-  window.addEventListener('resize', hideTooltip)
-  document.addEventListener('scroll', hideTooltip, true)
+  window.addEventListener('resize', () => {
+    hideTooltip()
+    setTrackMenuOpen(false)
+    updateTrackTitleMotion()
+  })
+  document.addEventListener(
+    'scroll',
+    () => {
+      hideTooltip()
+      setTrackMenuOpen(false)
+    },
+    true,
+  )
 
   $('#window-minimize').addEventListener('click', api.minimize)
   $('#window-maximize').addEventListener('click', api.toggleMaximize)
@@ -1529,7 +1651,24 @@ function bindEvents() {
     showToast(state.shuffle ? '随机播放已开启' : '随机播放已关闭')
   })
   el.repeatButton.addEventListener('click', cycleRepeatMode)
-  $('#track-more').addEventListener('click', () => setQueueOpen(true))
+  el.trackMore.addEventListener('click', (event) => {
+    event.stopPropagation()
+    setTrackMenuOpen(!el.trackMenu.classList.contains('is-open'))
+  })
+  el.trackMenu.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-quality-level]')
+    if (button) setQualityLevel(button.dataset.qualityLevel)
+  })
+  document.addEventListener('click', (event) => {
+    if (!el.trackMenu.classList.contains('is-open')) return
+    if (
+      el.trackMenu.contains(event.target) ||
+      el.trackMore.contains(event.target)
+    ) {
+      return
+    }
+    setTrackMenuOpen(false)
+  })
 
   el.progress.addEventListener('input', () => {
     const value = Number(el.progress.value) / 1000
@@ -1707,6 +1846,7 @@ function bindEvents() {
       return
     }
     if (event.key === 'Escape') {
+      setTrackMenuOpen(false)
       setQueueOpen(false)
       setEqualizerOpen(false)
       setProfileOpen(false)
@@ -1739,6 +1879,7 @@ async function initialize() {
   updateProfileUI()
   renderEqualizerBands()
   renderQueue()
+  updateQualityMenuSelection()
 
   try {
     const bootstrap = await api.bootstrap()
@@ -1754,6 +1895,9 @@ async function initialize() {
     state.profile = state.profiles[state.primaryProvider] || null
     state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
     state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
+    if (QUALITY_OPTIONS[bootstrap.audio?.qualityLevel]) {
+      state.qualityLevel = bootstrap.audio.qualityLevel
+    }
     if (
       Array.isArray(bootstrap.audio?.equalizerBands) &&
       bootstrap.audio.equalizerBands.length === 10
@@ -1762,6 +1906,7 @@ async function initialize() {
     }
     updateProfileUI()
     renderEqualizerBands()
+    updateQualityMenuSelection()
     state.queue = bootstrap.roam || []
     state.queueMode = 'roam'
     state.sources.roam = state.queue

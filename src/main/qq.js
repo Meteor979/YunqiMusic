@@ -149,10 +149,16 @@ function createQqAdapter({ getCookie, setCookie }) {
       .filter(Boolean)
   }
 
-  async function songUrl(track) {
+  async function songUrl(track, qualityLevel = 'auto') {
     const qq = await api()
     const cookie = accountCookie()
-    const qualities = cookie ? ['flac', '320', '128'] : ['128']
+    const qualities = !cookie
+      ? ['128']
+      : qualityLevel === 'standard'
+        ? ['128']
+        : qualityLevel === 'exhigh' || qualityLevel === 'higher'
+          ? ['320', '128']
+          : ['flac', '320', '128']
     let fallback = null
 
     for (const quality of qualities) {
