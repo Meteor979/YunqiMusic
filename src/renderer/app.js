@@ -147,6 +147,22 @@ const QUALITY_OPTIONS = {
   higher: '较高',
   standard: '标准',
 }
+const BUILT_IN_DEFAULT_TRACK = {
+  id: 'netease:1846122270',
+  provider: 'netease',
+  providerId: '1846122270',
+  providerData: { id: '1846122270' },
+  name: 'Close To You',
+  artists: ['藤井風'],
+  artistIds: [33760539],
+  album: 'HELP EVER HURT COVER',
+  albumId: 127638694,
+  cover:
+    'https://p4.music.126.net/c24bbaoDnUQsyFcjkgg-EQ==/109951165990931399.jpg?param=900y900',
+  duration: 220466,
+  fee: 1,
+  mvid: 0,
+}
 
 let audioContext = null
 let mediaSource = null
@@ -2420,6 +2436,64 @@ function bindEvents() {
   }
 }
 
+function applyBootstrapState(bootstrap) {
+  state.profiles = {
+    netease: null,
+    kugou: null,
+    qq: null,
+    qishui: null,
+    ...(bootstrap.profiles || {}),
+  }
+  state.primaryProvider = bootstrap.primaryProvider || 'netease'
+  state.secondaryEnabled = bootstrap.secondaryEnabled !== false
+  state.roamMode =
+    bootstrap.roamMode === 'explore' ? 'explore' : 'continuous'
+  state.roamMood = bootstrap.roamMood || 'random'
+  state.profile = state.profiles[state.primaryProvider] || null
+  state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
+  state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
+  if (QUALITY_OPTIONS[bootstrap.audio?.qualityLevel]) {
+    state.qualityLevel = bootstrap.audio.qualityLevel
+  }
+  if (
+    Array.isArray(bootstrap.audio?.equalizerBands) &&
+    bootstrap.audio.equalizerBands.length === 10
+  ) {
+    state.equalizerBands = [...bootstrap.audio.equalizerBands]
+  }
+  updateProfileUI()
+  renderEqualizerBands()
+  updateQualityMenuSelection()
+  updateRoamModeUI()
+}
+
+async function applyRoamSnapshot(tracks) {
+  const current = state.track
+  const incoming = Array.isArray(tracks) ? tracks : []
+  state.queue = current
+    ? [current, ...incoming.filter((track) => track.id !== current.id)]
+    : incoming
+  state.queueMode = 'roam'
+  state.sources.roam = state.queue
+  state.currentIndex = state.queue.length ? 0 : -1
+  renderQueue()
+
+  if (!state.track && state.queue.length) {
+    await prepareTrack(state.queue[0])
+  }
+}
+
+async function loadDefaultTrack() {
+  if (state.track) return
+  const track = { ...BUILT_IN_DEFAULT_TRACK }
+  state.queue = [track]
+  state.queueMode = 'roam'
+  state.sources.roam = state.queue
+  state.currentIndex = 0
+  renderQueue()
+  await prepareTrack(track)
+}
+
 async function initialize() {
   bindEvents()
   initializeAmbientCanvas()
@@ -2431,48 +2505,29 @@ async function initialize() {
   updateQualityMenuSelection()
 
   try {
-    const bootstrap = await api.bootstrap()
-    state.profiles = {
-      netease: null,
-      kugou: null,
-      qq: null,
-      qishui: null,
-      ...(bootstrap.profiles || {}),
+    const local = await api.bootstrap()
+    applyBootstrapState(local)
+    await applyRoamSnapshot(local.roam)
+    if (!state.track && !state.queue.length) {
+      await loadDefaultTrack()
     }
-    state.primaryProvider = bootstrap.primaryProvider || 'netease'
-    state.secondaryEnabled = bootstrap.secondaryEnabled !== false
-    state.roamMode =
-      bootstrap.roamMode === 'explore' ? 'explore' : 'continuous'
-    state.roamMood = bootstrap.roamMood || 'random'
-    state.profile = state.profiles[state.primaryProvider] || null
-    state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
-    state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
-    if (QUALITY_OPTIONS[bootstrap.audio?.qualityLevel]) {
-      state.qualityLevel = bootstrap.audio.qualityLevel
-    }
-    if (
-      Array.isArray(bootstrap.audio?.equalizerBands) &&
-      bootstrap.audio.equalizerBands.length === 10
-    ) {
-      state.equalizerBands = [...bootstrap.audio.equalizerBands]
-    }
-    updateProfileUI()
-    renderEqualizerBands()
-    updateQualityMenuSelection()
-    updateRoamModeUI()
-    state.queue = bootstrap.roam || []
-    state.queueMode = 'roam'
-    state.sources.roam = state.queue
-    state.currentIndex = state.queue.length ? 0 : -1
-
-    if (state.queue.length) {
-      await prepareTrack(state.queue[0])
-    } else {
+    if (!state.track) {
       updateTrackUI(null)
       resetLyrics('')
     }
-    renderQueue()
     refreshLibrary(false).catch(() => {})
+
+    api
+      .bootstrapLive()
+      .then(async (live) => {
+        applyBootstrapState(live)
+        await applyRoamSnapshot(live.roam)
+        if (!state.track) {
+          updateTrackUI(null)
+          resetLyrics('')
+        }
+      })
+      .catch(() => {})
   } catch (error) {
     updateTrackUI(null)
     resetLyrics('')

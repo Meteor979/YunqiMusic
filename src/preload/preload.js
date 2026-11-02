@@ -4,6 +4,7 @@ const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args)
 
 contextBridge.exposeInMainWorld('yunqi', {
   bootstrap: () => invoke('app:bootstrap'),
+  bootstrapLive: () => invoke('app:bootstrap-live'),
   getDaily: () => invoke('music:daily'),
   getRoam: (limit, mode, mood) => invoke('music:roam', limit, mode, mood),
   setRoamMode: (mode) => invoke('music:set-roam-mode', mode),

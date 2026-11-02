@@ -77,6 +77,8 @@ let store = {
   qishuiDeviceId: null,
   qishuiSession: null,
   lastTrack: null,
+  knownProfiles: {},
+  cachedRoam: [],
   windowBounds: null,
   loudnessEnabled: true,
   equalizerEnabled: true,
@@ -191,6 +193,11 @@ function loadStore() {
       roamMode:
         raw.roamMode === 'explore' ? 'explore' : 'continuous',
       roamMood: ROAM_MOODS.has(raw.roamMood) ? raw.roamMood : 'random',
+      knownProfiles:
+        raw.knownProfiles && typeof raw.knownProfiles === 'object'
+          ? raw.knownProfiles
+          : {},
+      cachedRoam: Array.isArray(raw.cachedRoam) ? raw.cachedRoam : [],
     }
     delete store.cookieEncrypted
     delete store.cookiesEncrypted
@@ -212,6 +219,8 @@ function saveStore() {
     qualityLevel: store.qualityLevel,
     roamMode: store.roamMode,
     roamMood: store.roamMood,
+    knownProfiles: store.knownProfiles,
+    cachedRoam: store.cachedRoam,
     primaryProvider: store.primaryProvider,
     secondaryEnabled: store.secondaryEnabled,
     kugouDevice: store.kugouDevice,
@@ -1113,15 +1122,62 @@ async function getProviderProfiles() {
     qqProvider.getProfile().catch(() => null),
     qishuiProvider.getProfile().catch(() => null),
   ])
-  return { netease, kugou, qq, qishui }
+  const profiles = { netease, kugou, qq, qishui }
+  store.knownProfiles = profiles
+  saveStore()
+  return profiles
 }
 
 function registerIpc() {
-  ipcMain.handle('app:bootstrap', async () => {
+  ipcMain.handle('app:bootstrap', () => {
+    const cachedRoam = store.cachedRoam?.length
+      ? store.cachedRoam
+      : store.lastTrack
+        ? [store.lastTrack]
+        : []
+    const profiles = { ...(store.knownProfiles || {}) }
+    const cookieProviders = {
+      netease: Boolean(store.cookies.netease),
+      kugou: Boolean(store.cookies.kugou),
+      qq: Boolean(store.cookies.qq),
+      qishui: Boolean(store.qishuiSession),
+    }
+    for (const [provider, loggedIn] of Object.entries(cookieProviders)) {
+      if (!profiles[provider] && loggedIn) {
+        profiles[provider] = {
+          id: 'cached',
+          name: '已登录',
+          avatar: '',
+          vip: false,
+        }
+      }
+    }
+    return {
+      profile: profiles[store.primaryProvider] || null,
+      profiles,
+      primaryProvider: store.primaryProvider,
+      secondaryEnabled: store.secondaryEnabled,
+      roamMode: store.roamMode,
+      roamMood: store.roamMood,
+      roam: cachedRoam,
+      audio: {
+        loudnessEnabled: store.loudnessEnabled,
+        equalizerEnabled: store.equalizerEnabled,
+        equalizerBands: store.equalizerBands,
+        qualityLevel: store.qualityLevel,
+      },
+    }
+  })
+
+  ipcMain.handle('app:bootstrap-live', async () => {
     const [profiles, roam] = await Promise.all([
       getProviderProfiles(),
       getRoamTracks(8, store.roamMode, store.roamMood).catch(() => []),
     ])
+    if (roam.length) {
+      store.cachedRoam = roam.slice(0, 20)
+      saveStore()
+    }
     return {
       profile: profiles[store.primaryProvider],
       profiles,

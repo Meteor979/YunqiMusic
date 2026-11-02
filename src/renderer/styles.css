@@ -469,6 +469,7 @@ svg {
 
 .now-heading {
   display: flex;
+  min-height: clamp(31px, 2.2vw, 39px);
   align-items: flex-end;
   justify-content: space-between;
   margin-bottom: clamp(18px, 2.5vh, 27px);
