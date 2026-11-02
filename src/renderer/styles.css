@@ -270,6 +270,14 @@ svg {
   height: 34px;
 }
 
+#track-more {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
 .icon-button svg {
   width: 18px;
   height: 18px;
@@ -448,9 +456,9 @@ svg {
   width: 44px;
   height: 44px;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.04);
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
   color: var(--text-soft);
   transition:
     transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1.4),
@@ -460,8 +468,8 @@ svg {
 
 .rail-orb:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.09);
-  transform: rotate(-6deg) scale(1.05);
+  background: rgba(255, 255, 255, 0.06);
+  transform: scale(1.04);
 }
 
 .rail-orb svg {
@@ -977,7 +985,22 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   overflow: auto;
   padding: 35% 15px 42%;
   scrollbar-width: none;
-  mask-image: linear-gradient(to bottom, transparent, black 15%, black 85%, transparent);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.65) 7%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.65) 7%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
 }
 
 .lyrics-scroll::-webkit-scrollbar {
@@ -1052,12 +1075,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   left: 0;
   height: 45px;
   pointer-events: none;
-}
-
-.lyrics-fade-top {
-  top: 68px;
-  background: linear-gradient(to bottom, #0b0c0f, transparent);
-  opacity: 0.5;
 }
 
 .lyrics-fade-bottom {
@@ -1668,6 +1685,212 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   inset: var(--titlebar-height) 0 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+.equalizer-panel {
+  position: fixed;
+  z-index: 80;
+  inset: var(--titlebar-height) 0 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.equalizer-panel.is-open {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.equalizer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.24);
+  opacity: 0;
+  backdrop-filter: blur(2px);
+  transition: opacity 260ms ease;
+}
+
+.equalizer-panel.is-open .equalizer-backdrop {
+  opacity: 1;
+}
+
+.equalizer-sheet {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  width: min(440px, calc(100vw - 110px));
+  flex-direction: column;
+  padding: 27px 24px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  background: rgba(17, 19, 23, 0.9);
+  box-shadow: -24px 0 80px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  backdrop-filter: blur(35px) saturate(125%);
+  transform: translateX(30px) scale(0.985);
+  transition:
+    opacity 280ms ease,
+    transform 380ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.equalizer-panel.is-open .equalizer-sheet {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+}
+
+.equalizer-options {
+  display: grid;
+  gap: 2px;
+  margin-top: 20px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.setting-toggle {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.setting-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.setting-toggle i {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  transition: 180ms ease;
+}
+
+.setting-toggle i::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  content: "";
+  transition: 180ms ease;
+}
+
+.setting-toggle input:checked + i {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.23);
+}
+
+.setting-toggle input:checked + i::after {
+  background: var(--accent-bright);
+  transform: translateX(14px);
+}
+
+.setting-toggle input:focus-visible + i {
+  outline: 2px solid rgba(var(--accent-rgb), 0.9);
+  outline-offset: 3px;
+}
+
+.equalizer-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+  margin: 18px 0 19px;
+}
+
+.equalizer-presets button {
+  min-height: 33px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
+  transition: 160ms ease;
+}
+
+.equalizer-presets button:hover,
+.equalizer-presets button.is-active {
+  border-color: rgba(var(--accent-rgb), 0.38);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--text);
+}
+
+.equalizer-bands {
+  display: grid;
+  flex: 1;
+  min-height: 225px;
+  grid-template-columns: repeat(10, minmax(24px, 1fr));
+  gap: 2px;
+  padding: 22px 4px 17px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+  transition: opacity 180ms ease;
+}
+
+.equalizer-bands.is-disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.eq-band {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  grid-template-rows: 19px 1fr 16px;
+  gap: 7px;
+}
+
+.eq-value {
+  color: var(--text-faint);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.eq-band input[type="range"] {
+  width: 18px;
+  height: 150px;
+  margin: 0;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+
+.eq-band input[type="range"]::-webkit-slider-runnable-track {
+  width: 3px;
+  height: 100%;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.eq-band input[type="range"]::-webkit-slider-thumb {
+  width: 11px;
+  height: 11px;
+  margin-top: 0;
+  margin-left: -4px;
+  opacity: 1;
+  background: var(--accent-bright);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.5);
+}
+
+.eq-frequency {
+  color: var(--text-faint);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.equalizer-reset {
+  width: 100%;
+  margin-top: 14px;
 }
 
 .queue-panel.is-open {

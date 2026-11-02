@@ -36,6 +36,9 @@
       <symbol id="icon-queue" viewBox="0 0 24 24">
         <path d="M4 5.5a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h9a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm1 4a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H5Zm12.5-5.5a1 1 0 0 1 1 1v5.08a2.5 2.5 0 1 1-1.5-2.3V10a1 1 0 0 1 1-1Zm-.75 6.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" />
       </symbol>
+      <symbol id="icon-equalizer" viewBox="0 0 24 24">
+        <path d="M4 4.5h2v6H4v-6Zm0 9h2v6H4v-6Zm7-8h2v10h-2v-10Zm0 13h2v1h-2v-1Zm7-11h2v4h-2v-4Zm0 7h2v5h-2v-5ZM3 12.5h4v-2H3v2Zm7-5h4v-2h-4v2Zm7-5h4v-2h-4v2Z" />
+      </symbol>
       <symbol id="icon-user" viewBox="0 0 24 24">
         <path d="M12 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Zm-4 4.5a4 4 0 1 1 8 0 4 4 0 0 1-8 0Zm4 6c-4.36 0-7.71 2.56-8.84 6.08a1 1 0 0 0 .95 1.3h15.78a1 1 0 0 0 .95-1.3C19.71 16.56 16.36 14 12 14Zm-6.68 5.4C6.16 16.86 8.79 15 12 15s5.84 1.86 6.68 4.4H5.32Z" />
       </symbol>
@@ -142,7 +145,7 @@
           <section class="view is-active now-view" data-view="now" id="now-view">
             <div class="now-heading">
               <div>
-                <p class="eyebrow"><span class="live-dot"></span> PERSONAL RADIO</p>
+                <p class="eyebrow">PERSONAL RADIO</p>
                 <h1>漫游</h1>
               </div>
               <div class="sound-quality">
@@ -170,7 +173,7 @@
                       <h2 id="track-name"></h2>
                       <p id="track-artist"></p>
                     </div>
-                    <button class="icon-button circle glass-button" id="track-more" title="更多">
+                    <button class="icon-button" id="track-more" title="更多">
                       <svg><use href="#icon-more"></use></svg>
                     </button>
                   </div>
@@ -204,19 +207,11 @@
                 </div>
 
                 <div class="utility-row">
-                  <button class="utility-button" id="like-button">
+                  <button class="utility-button" id="like-button" aria-label="喜欢" title="喜欢">
                     <svg><use href="#icon-heart"></use></svg>
-                    <span>喜欢</span>
                   </button>
-                  <div class="volume-control">
-                    <button class="utility-button" id="mute-button" title="静音">
-                      <svg><use href="#icon-volume"></use></svg>
-                    </button>
-                    <input id="volume-range" type="range" min="0" max="100" value="78" aria-label="音量" />
-                  </div>
-                  <button class="utility-button" id="open-queue-button">
-                    <svg><use href="#icon-queue"></use></svg>
-                    <span>队列</span>
+                  <button class="utility-button" id="equalizer-button" aria-label="均衡器" title="均衡器">
+                    <svg><use href="#icon-equalizer"></use></svg>
                   </button>
                 </div>
               </section>
@@ -233,7 +228,6 @@
                     <p class="lyric-placeholder"></p>
                   </div>
                 </div>
-                <div class="lyrics-fade lyrics-fade-top"></div>
                 <div class="lyrics-fade lyrics-fade-bottom"></div>
               </section>
             </div>
@@ -309,6 +303,44 @@
           <div class="queue-empty" id="queue-empty">
             <button class="outline-button" id="queue-find-button">去发现音乐</button>
           </div>
+        </div>
+      </aside>
+
+      <aside class="equalizer-panel" id="equalizer-panel" aria-hidden="true">
+        <div class="equalizer-backdrop" id="equalizer-backdrop"></div>
+        <div class="equalizer-sheet">
+          <div class="queue-sheet-header">
+            <div>
+              <p class="eyebrow">EQUALIZER</p>
+              <h2>均衡器</h2>
+            </div>
+            <button class="round-close" id="equalizer-close">
+              <svg><use href="#icon-close-small"></use></svg>
+            </button>
+          </div>
+
+          <div class="equalizer-options">
+            <label class="setting-toggle">
+              <span>音量平衡</span>
+              <input id="loudness-toggle" type="checkbox" checked />
+              <i></i>
+            </label>
+            <label class="setting-toggle">
+              <span>均衡器</span>
+              <input id="equalizer-toggle" type="checkbox" checked />
+              <i></i>
+            </label>
+          </div>
+
+          <div class="equalizer-presets" id="equalizer-presets">
+            <button data-preset="flat">平直</button>
+            <button data-preset="warm">温暖</button>
+            <button data-preset="vocal">人声</button>
+            <button data-preset="bass">低频</button>
+          </div>
+
+          <div class="equalizer-bands" id="equalizer-bands"></div>
+          <button class="outline-button equalizer-reset" id="equalizer-reset">恢复平直</button>
         </div>
       </aside>
 

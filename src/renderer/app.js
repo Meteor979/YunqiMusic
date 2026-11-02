@@ -1,5 +1,6 @@
 const api = window.yunqi
 const audio = document.getElementById('audio-element')
+audio.crossOrigin = 'anonymous'
 
 const $ = (selector) => document.querySelector(selector)
 const $$ = (selector) => [...document.querySelectorAll(selector)]
@@ -23,6 +24,10 @@ const state = {
   shuffle: false,
   playing: false,
   liked: false,
+  loudnessEnabled: true,
+  equalizerEnabled: true,
+  equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  trackLoudnessDb: 0,
   loadToken: 0,
   searchToken: 0,
   artToken: 0,
@@ -43,7 +48,6 @@ const el = {
   currentTime: $('#current-time'),
   totalTime: $('#total-time'),
   progress: $('#progress-range'),
-  volume: $('#volume-range'),
   playButton: $('#play-button'),
   lyricsScroll: $('#lyrics-scroll'),
   lyricsList: $('#lyrics-list'),
@@ -70,9 +74,13 @@ const el = {
   playlistContent: $('#playlist-content'),
   quality: $('#quality-label'),
   likeButton: $('#like-button'),
-  muteButton: $('#mute-button'),
   shuffleButton: $('#shuffle-button'),
   repeatButton: $('#repeat-button'),
+  equalizerPanel: $('#equalizer-panel'),
+  equalizerBands: $('#equalizer-bands'),
+  equalizerToggle: $('#equalizer-toggle'),
+  loudnessToggle: $('#loudness-toggle'),
+  equalizerPresets: $('#equalizer-presets'),
   toastStack: $('#toast-stack'),
 }
 
@@ -84,6 +92,21 @@ const icons = {
   heart: '<svg aria-hidden="true"><use href="#icon-heart"></use></svg>',
   user: '<svg aria-hidden="true"><use href="#icon-user"></use></svg>',
 }
+
+const EQ_FREQUENCIES = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+const EQ_PRESETS = {
+  flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  warm: [2, 1.5, 1, 0.5, 0, -0.5, -0.5, 0, 0.5, 1],
+  vocal: [-1, -0.5, 0, 1, 2, 2.5, 2, 1, 0, -1],
+  bass: [4, 3.5, 2.5, 1.5, 0, -0.5, -1, -0.5, 0, 0.5],
+}
+
+let audioContext = null
+let mediaSource = null
+let normalizerGain = null
+let compressor = null
+let equalizerNodes = []
+let saveAudioTimer = null
 
 function escapeHTML(value = '') {
   return String(value)
@@ -157,6 +180,150 @@ function showToast(message, duration = 2800) {
 
 function setRangeFill(range, percentage) {
   range.style.setProperty('--range-progress', `${Math.max(0, Math.min(100, percentage))}%`)
+}
+
+function dbToGain(value) {
+  return Math.pow(10, value / 20)
+}
+
+function applyEqualizer() {
+  if (!audioContext || !equalizerNodes.length) return
+  const now = audioContext.currentTime
+  equalizerNodes.forEach((filter, index) => {
+    const gain = state.equalizerEnabled ? state.equalizerBands[index] : 0
+    filter.gain.setTargetAtTime(gain, now, 0.04)
+  })
+  el.equalizerBands.classList.toggle('is-disabled', !state.equalizerEnabled)
+}
+
+function applyLoudnessNormalization() {
+  if (!audioContext || !normalizerGain || !compressor) return
+  const now = audioContext.currentTime
+
+  if (!state.loudnessEnabled) {
+    normalizerGain.gain.setTargetAtTime(1, now, 0.05)
+    compressor.threshold.setTargetAtTime(0, now, 0.05)
+    compressor.knee.setTargetAtTime(0, now, 0.05)
+    compressor.ratio.setTargetAtTime(1, now, 0.05)
+    return
+  }
+
+  const reference = Number.isFinite(state.trackLoudnessDb)
+    ? state.trackLoudnessDb
+    : 0
+  const gentleTrackGain =
+    reference === 0
+      ? 0.6
+      : reference < 0
+        ? Math.max(-3.5, reference * 0.35)
+        : Math.min(1.5, reference * 0.7)
+
+  normalizerGain.gain.setTargetAtTime(dbToGain(gentleTrackGain), now, 0.08)
+  compressor.threshold.setTargetAtTime(-10, now, 0.05)
+  compressor.knee.setTargetAtTime(14, now, 0.05)
+  compressor.ratio.setTargetAtTime(2.5, now, 0.05)
+  compressor.attack.setTargetAtTime(0.006, now, 0.02)
+  compressor.release.setTargetAtTime(0.24, now, 0.05)
+}
+
+async function ensureAudioGraph() {
+  if (!audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextClass) return
+
+    audioContext = new AudioContextClass({ latencyHint: 'playback' })
+    mediaSource = audioContext.createMediaElementSource(audio)
+    normalizerGain = audioContext.createGain()
+    compressor = audioContext.createDynamicsCompressor()
+    equalizerNodes = EQ_FREQUENCIES.map((frequency) => {
+      const filter = audioContext.createBiquadFilter()
+      filter.type = 'peaking'
+      filter.frequency.value = frequency
+      filter.Q.value = 1.05
+      filter.gain.value = 0
+      return filter
+    })
+
+    mediaSource.connect(normalizerGain)
+    normalizerGain.connect(compressor)
+    let previous = compressor
+    for (const filter of equalizerNodes) {
+      previous.connect(filter)
+      previous = filter
+    }
+    previous.connect(audioContext.destination)
+  }
+
+  if (audioContext.state === 'suspended') await audioContext.resume()
+  applyLoudnessNormalization()
+  applyEqualizer()
+}
+
+function saveAudioSettings() {
+  if (saveAudioTimer) window.clearTimeout(saveAudioTimer)
+  saveAudioTimer = window.setTimeout(() => {
+    api
+      .setAudioSettings({
+        loudnessEnabled: state.loudnessEnabled,
+        equalizerEnabled: state.equalizerEnabled,
+        equalizerBands: state.equalizerBands,
+      })
+      .catch(() => {})
+  }, 250)
+}
+
+function formatBandValue(value) {
+  const rounded = Math.round(Number(value) * 2) / 2
+  return `${rounded > 0 ? '+' : ''}${rounded}`
+}
+
+function renderEqualizerBands() {
+  el.equalizerBands.innerHTML = EQ_FREQUENCIES.map((frequency, index) => {
+    const label = frequency >= 1000 ? `${frequency / 1000}k` : String(frequency)
+    return `
+      <label class="eq-band">
+        <span class="eq-value">${formatBandValue(state.equalizerBands[index])}</span>
+        <input
+          type="range"
+          min="-12"
+          max="12"
+          step="0.5"
+          value="${state.equalizerBands[index]}"
+          data-eq-index="${index}"
+          aria-label="${frequency} Hz"
+        />
+        <span class="eq-frequency">${label}</span>
+      </label>
+    `
+  }).join('')
+
+  el.equalizerBands.classList.toggle(
+    'is-disabled',
+    !state.equalizerEnabled,
+  )
+  el.equalizerToggle.checked = state.equalizerEnabled
+  el.loudnessToggle.checked = state.loudnessEnabled
+  updatePresetSelection()
+}
+
+function updatePresetSelection() {
+  for (const button of $$('#equalizer-presets [data-preset]')) {
+    const preset = EQ_PRESETS[button.dataset.preset]
+    button.classList.toggle(
+      'is-active',
+      preset?.every(
+        (value, index) => Number(value) === Number(state.equalizerBands[index]),
+      ),
+    )
+  }
+}
+
+function setEqualizerPreset(name) {
+  if (!EQ_PRESETS[name]) return
+  state.equalizerBands = [...EQ_PRESETS[name]]
+  renderEqualizerBands()
+  applyEqualizer()
+  saveAudioSettings()
 }
 
 function updatePlayButton() {
@@ -478,6 +645,7 @@ async function startPlayback(track = state.track, token = state.loadToken) {
 
   try {
     if (audio.src && audio.dataset.trackId === String(track.id)) {
+      await ensureAudioGraph()
       await audio.play()
       return
     }
@@ -491,9 +659,11 @@ async function startPlayback(track = state.track, token = state.loadToken) {
       return
     }
 
+    await ensureAudioGraph()
     audio.dataset.trackId = String(track.id)
+    state.trackLoudnessDb = Number(result.gain || 0)
+    applyLoudnessNormalization()
     audio.src = result.url
-    audio.volume = Number(el.volume.value) / 100
     el.quality.textContent = formatQuality(result)
 
     await audio.play()
@@ -957,8 +1127,15 @@ function renderQueue() {
 }
 
 function setQueueOpen(open) {
+  if (open) setEqualizerOpen(false)
   el.queuePanel.classList.toggle('is-open', open)
   el.queuePanel.setAttribute('aria-hidden', open ? 'false' : 'true')
+}
+
+function setEqualizerOpen(open) {
+  if (open) setQueueOpen(false)
+  el.equalizerPanel.classList.toggle('is-open', open)
+  el.equalizerPanel.setAttribute('aria-hidden', open ? 'false' : 'true')
 }
 
 function setProfileOpen(open) {
@@ -1117,20 +1294,6 @@ function bindEvents() {
     if (duration > 0) audio.currentTime = (Number(el.progress.value) / 1000) * duration
   })
 
-  el.volume.addEventListener('input', () => {
-    const volume = Number(el.volume.value) / 100
-    audio.volume = volume
-    audio.muted = volume === 0
-    setRangeFill(el.volume, volume * 100)
-    el.muteButton.innerHTML = volume === 0 ? icons.mute : icons.volume
-    api.setVolume(volume).catch(() => {})
-  })
-
-  el.muteButton.addEventListener('click', () => {
-    audio.muted = !audio.muted
-    el.muteButton.innerHTML = audio.muted ? icons.mute : icons.volume
-  })
-
   audio.addEventListener('play', () => {
     state.playing = true
     updatePlayButton()
@@ -1155,9 +1318,13 @@ function bindEvents() {
   })
 
   $('#queue-toggle').addEventListener('click', () => setQueueOpen(true))
-  $('#open-queue-button').addEventListener('click', () => setQueueOpen(true))
+  $('#equalizer-button').addEventListener('click', () => setEqualizerOpen(true))
   $('#queue-close').addEventListener('click', () => setQueueOpen(false))
   $('#queue-backdrop').addEventListener('click', () => setQueueOpen(false))
+  $('#equalizer-close').addEventListener('click', () => setEqualizerOpen(false))
+  $('#equalizer-backdrop').addEventListener('click', () =>
+    setEqualizerOpen(false),
+  )
   $('#queue-find-button').addEventListener('click', () => {
     setQueueOpen(false)
     setView('search')
@@ -1166,6 +1333,36 @@ function bindEvents() {
     const item = event.target.closest('[data-queue-index]')
     if (item) playQueueIndex(Number(item.dataset.queueIndex))
   })
+
+  el.equalizerBands.addEventListener('input', (event) => {
+    const slider = event.target.closest('[data-eq-index]')
+    if (!slider) return
+    const index = Number(slider.dataset.eqIndex)
+    state.equalizerBands[index] = Number(slider.value)
+    slider.closest('.eq-band').querySelector('.eq-value').textContent =
+      formatBandValue(slider.value)
+    updatePresetSelection()
+    applyEqualizer()
+    saveAudioSettings()
+  })
+  el.equalizerToggle.addEventListener('change', () => {
+    state.equalizerEnabled = el.equalizerToggle.checked
+    applyEqualizer()
+    saveAudioSettings()
+  })
+  el.loudnessToggle.addEventListener('change', async () => {
+    state.loudnessEnabled = el.loudnessToggle.checked
+    await ensureAudioGraph()
+    applyLoudnessNormalization()
+    saveAudioSettings()
+  })
+  el.equalizerPresets.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-preset]')
+    if (button) setEqualizerPreset(button.dataset.preset)
+  })
+  $('#equalizer-reset').addEventListener('click', () =>
+    setEqualizerPreset('flat'),
+  )
 
   el.profileButton.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -1230,6 +1427,7 @@ function bindEvents() {
     }
     if (event.key === 'Escape') {
       setQueueOpen(false)
+      setEqualizerOpen(false)
       setProfileOpen(false)
       return
     }
@@ -1257,22 +1455,26 @@ async function initialize() {
   bindEvents()
   updatePlayButton()
   updateProfileUI()
+  renderEqualizerBands()
   renderQueue()
 
   try {
     const bootstrap = await api.bootstrap()
     state.profile = bootstrap.profile
+    state.loudnessEnabled = bootstrap.audio?.loudnessEnabled !== false
+    state.equalizerEnabled = bootstrap.audio?.equalizerEnabled !== false
+    if (
+      Array.isArray(bootstrap.audio?.equalizerBands) &&
+      bootstrap.audio.equalizerBands.length === 10
+    ) {
+      state.equalizerBands = [...bootstrap.audio.equalizerBands]
+    }
     updateProfileUI()
+    renderEqualizerBands()
     state.queue = bootstrap.roam || []
     state.queueMode = 'roam'
     state.sources.roam = state.queue
     state.currentIndex = state.queue.length ? 0 : -1
-
-    const volume = Math.round((bootstrap.volume ?? 0.78) * 100)
-    el.volume.value = String(volume)
-    setRangeFill(el.volume, volume)
-    audio.volume = volume / 100
-    if (volume === 0) el.muteButton.innerHTML = icons.mute
 
     if (state.queue.length) {
       await prepareTrack(state.queue[0])

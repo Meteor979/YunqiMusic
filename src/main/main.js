@@ -32,8 +32,10 @@ let webLoginTask = null
 let store = {
   cookie: '',
   lastTrack: null,
-  volume: 0.78,
   windowBounds: null,
+  loudnessEnabled: true,
+  equalizerEnabled: true,
+  equalizerBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 }
 const imageCache = new Map()
 
@@ -47,6 +49,12 @@ function loadStore() {
     store = {
       ...store,
       ...raw,
+      equalizerBands:
+        Array.isArray(raw.equalizerBands) && raw.equalizerBands.length === 10
+          ? raw.equalizerBands.map((value) =>
+              Math.max(-12, Math.min(12, Number(value) || 0)),
+            )
+          : store.equalizerBands,
       cookie:
         typeof raw.cookie === 'string'
           ? raw.cookie
@@ -66,8 +74,10 @@ function loadStore() {
 function saveStore() {
   const payload = {
     lastTrack: store.lastTrack,
-    volume: store.volume,
     windowBounds: store.windowBounds,
+    loudnessEnabled: store.loudnessEnabled,
+    equalizerEnabled: store.equalizerEnabled,
+    equalizerBands: store.equalizerBands,
   }
 
   if (store.cookie && safeStorage.isEncryptionAvailable()) {
@@ -272,8 +282,12 @@ function registerIpc() {
     ])
     return {
       profile,
-      volume: store.volume,
       roam,
+      audio: {
+        loudnessEnabled: store.loudnessEnabled,
+        equalizerEnabled: store.equalizerEnabled,
+        equalizerBands: store.equalizerBands,
+      },
     }
   })
 
@@ -352,6 +366,9 @@ function registerIpc() {
         bitrate: Number(item.br || 0),
         size: Number(item.size || 0),
         level: item.level || level,
+        gain: Number(item.gain || 0),
+        peak: Number(item.peak || 0),
+        closedGain: Number(item.closedGain || 0),
         limited: Boolean(item.freeTrialInfo),
         trial: item.freeTrialInfo || null,
       }
@@ -538,10 +555,27 @@ function registerIpc() {
     saveStore()
   })
 
-  ipcMain.handle('app:set-volume', (_event, volume) => {
-    const value = Math.max(0, Math.min(1, Number(volume) || 0))
-    store.volume = value
+  ipcMain.handle('app:set-audio-settings', (_event, settings = {}) => {
+    if (typeof settings.loudnessEnabled === 'boolean') {
+      store.loudnessEnabled = settings.loudnessEnabled
+    }
+    if (typeof settings.equalizerEnabled === 'boolean') {
+      store.equalizerEnabled = settings.equalizerEnabled
+    }
+    if (
+      Array.isArray(settings.equalizerBands) &&
+      settings.equalizerBands.length === 10
+    ) {
+      store.equalizerBands = settings.equalizerBands.map((value) =>
+        Math.max(-12, Math.min(12, Number(value) || 0)),
+      )
+    }
     saveStore()
+    return {
+      loudnessEnabled: store.loudnessEnabled,
+      equalizerEnabled: store.equalizerEnabled,
+      equalizerBands: store.equalizerBands,
+    }
   })
 
   ipcMain.handle('updates:check', async () => checkForUpdate())

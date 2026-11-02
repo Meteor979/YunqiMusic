@@ -9,6 +9,7 @@
 - 通过网易云官方网页扫码登录，登录凭据保存在本机
 - 全屏歌词、逐行跟随和点击跳转
 - 自动音质：超清母带 → Hi-Res → 无损 → 极高 → 标准
+- 曲目响度平衡与 10 段均衡器
 - GitHub Releases 自动更新，仅替换应用包并保留本机登录状态
 - 播放队列、随机播放、循环模式、系统媒体键
 - 根据专辑封面生成强调色与环境光
@@ -33,7 +34,7 @@ pnpm run pack:dir
 先更新 `package.json` 的版本号，再推送匹配的 Git 标签。GitHub Actions 会自动构建 `app.asar` 和 `update.json`，并发布到 GitHub Releases。
 
 ```powershell
-git tag v0.1.3
+git tag v0.1.4
 git push origin main --tags
 ```
 

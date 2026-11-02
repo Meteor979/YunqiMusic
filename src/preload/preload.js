@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('yunqi', {
   webLogin: () => invoke('auth:web-login'),
   logout: () => invoke('auth:logout'),
   rememberTrack: (track) => invoke('app:remember-track', track),
-  setVolume: (volume) => invoke('app:set-volume', volume),
+  setAudioSettings: (settings) => invoke('app:set-audio-settings', settings),
   openExternal: (url) => invoke('shell:external', url),
   minimize: () => ipcRenderer.send('window:minimize'),
   toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
