@@ -2,8 +2,11 @@ const {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
+  nativeImage,
   session,
   shell,
+  Tray,
   safeStorage,
 } = require('electron')
 const fs = require('fs')
@@ -13,6 +16,7 @@ const { checkForUpdate, installUpdate } = require('./updater')
 const { createKugouAdapter } = require('./kugou')
 const { createQqAdapter } = require('./qq')
 const { createQishuiAdapter } = require('./qishui')
+const { createTogetherService } = require('./together')
 
 if (process.env.YUNQI_USER_DATA) {
   const userDataPath = path.resolve(process.env.YUNQI_USER_DATA)
@@ -47,8 +51,16 @@ const albumRequests = new Map()
 const artistRequests = new Map()
 
 let mainWindow = null
+let tray = null
+let isQuitting = false
 let webLoginTask = null
 let qqWebLoginTask = null
+const togetherService = createTogetherService({
+  emit: (event, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('together:event', { event, payload })
+  },
+})
 let store = {
   cookies: {
     netease: '',
@@ -1366,22 +1378,24 @@ function registerIpc() {
   })
 
   ipcMain.handle('music:like', async (_event, track, liked) => {
+    let result
     if (track.provider === 'kugou') {
-      return kugouProvider.setLike(track, Boolean(liked))
-    }
-    if (track.provider === 'qq') {
+      result = await kugouProvider.setLike(track, Boolean(liked))
+    } else if (track.provider === 'qq') {
       throw new Error('QQ 音乐收藏接口暂未接入')
+    } else if (track.provider === 'qishui') {
+      result = await qishuiProvider.setLike(track, Boolean(liked))
+    } else {
+      if (!store.cookies.netease) throw new Error('登录后才能收藏歌曲')
+      const body = await apiCall('like', {
+        id: Number(track.providerId),
+        like: Boolean(liked),
+      })
+      if (body.code !== 200) throw new Error(body.message || '收藏失败')
+      result = { liked: Boolean(liked) }
     }
-    if (track.provider === 'qishui') {
-      return qishuiProvider.setLike(track, Boolean(liked))
-    }
-    if (!store.cookies.netease) throw new Error('登录后才能收藏歌曲')
-    const body = await apiCall('like', {
-      id: Number(track.providerId),
-      like: Boolean(liked),
-    })
-    if (body.code !== 200) throw new Error(body.message || '收藏失败')
-    return { liked: Boolean(liked) }
+    libraryCache.delete(track.provider)
+    return result
   })
 
   ipcMain.handle('auth:logout', async (_event, provider = store.primaryProvider) => {
@@ -1735,6 +1749,23 @@ function registerIpc() {
     return installUpdate(update)
   })
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('together:get-state', () => togetherService.getState())
+  ipcMain.handle('together:create', (_event, provider) =>
+    togetherService.createRoom(provider),
+  )
+  ipcMain.handle('together:join', (_event, invite, name) =>
+    togetherService.joinRoom(invite, name),
+  )
+  ipcMain.handle('together:leave', () => togetherService.leaveRoom())
+  ipcMain.handle('together:sync', (_event, snapshot) =>
+    togetherService.sync(snapshot),
+  )
+  ipcMain.handle('together:control', (_event, action) =>
+    togetherService.control(action),
+  )
+  ipcMain.handle('together:chat', (_event, message) =>
+    togetherService.chat(message),
+  )
 
   ipcMain.handle('art:palette-source', async (_event, url) => {
     let parsed
@@ -1875,31 +1906,107 @@ function createWindow() {
   mainWindow.on('unmaximize', emitWindowState)
   mainWindow.on('focus', emitWindowState)
   mainWindow.on('blur', emitWindowState)
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     if (!mainWindow) return
     store.windowBounds = mainWindow.getBounds()
     saveStore()
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
   })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 }
 
-app.whenReady().then(() => {
-  app.setAppUserModelId('com.yunqi.music')
-  loadStore()
-  initializeProviderAdapters()
-  registerIpc()
-  createWindow()
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+function createTray() {
+  if (tray) return
+  const iconPath = path.join(
+    app.getAppPath(),
+    'build',
+    process.platform === 'win32' ? 'icon.ico' : 'icon.png',
+  )
+  const icon = nativeImage.createFromPath(iconPath)
+  tray = new Tray(icon)
+  tray.setToolTip('云栖音乐')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '显示云栖音乐',
+        click: showMainWindow,
+      },
+      { type: 'separator' },
+      {
+        label: '退出云栖音乐',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        },
+      },
+    ]),
+  )
+  tray.on('click', showMainWindow)
+  tray.on('double-click', showMainWindow)
+}
+
+function ensureDesktopShortcut() {
+  if (process.platform !== 'win32' || !app.isPackaged) return
+  try {
+    const shortcutPath = path.join(app.getPath('desktop'), '云栖音乐.lnk')
+    const shortcut = {
+      target: process.execPath,
+      cwd: path.dirname(process.execPath),
+      description: '云栖音乐',
+      icon: process.execPath,
+      iconIndex: 0,
+      appUserModelId: 'com.yunqi.music',
+    }
+    if (!shell.writeShortcutLink(shortcutPath, 'update', shortcut)) {
+      shell.writeShortcutLink(shortcutPath, 'create', shortcut)
+    }
+  } catch {
+    // A restricted desktop should not prevent the application from starting.
+  }
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', showMainWindow)
+  app.on('before-quit', () => {
+    isQuitting = true
+    togetherService.leaveRoom().catch(() => {})
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+  app.whenReady().then(() => {
+    app.setAppUserModelId('com.yunqi.music')
+    loadStore()
+    initializeProviderAdapters()
+    registerIpc()
+    createWindow()
+    createTray()
+    ensureDesktopShortcut()
+
+    app.on('activate', showMainWindow)
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin' && isQuitting) app.quit()
+  })
+}
 
 ipcMain.on('window:minimize', () => mainWindow?.minimize())
 ipcMain.on('window:toggle-maximize', () => {

@@ -983,6 +983,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 
 .utility-button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1010,6 +1011,21 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .utility-button svg {
   width: 15px;
   height: 15px;
+}
+
+.together-chat-button[hidden] {
+  display: none;
+}
+
+.together-chat-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.72);
 }
 
 #like-button svg {
@@ -1186,6 +1202,333 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   margin: 12px 0 0;
   color: var(--text-soft);
   font-size: 13px;
+}
+
+.together-header {
+  margin-bottom: 24px;
+}
+
+.together-content {
+  width: min(920px, 100%);
+}
+
+.together-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.together-card,
+.together-room {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), transparent 65%),
+    rgba(13, 15, 19, 0.52);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(22px);
+}
+
+.together-card {
+  min-height: 250px;
+  padding: 25px;
+}
+
+.together-card h2,
+.together-room h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 590;
+  letter-spacing: -0.025em;
+}
+
+.together-platform {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.together-card-copy {
+  margin: 20px 0 24px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.together-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.together-primary,
+.together-secondary {
+  min-height: 38px;
+  padding: 0 17px;
+  border-radius: 999px;
+  font-size: 11px;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.together-primary {
+  background: rgba(245, 247, 250, 0.94);
+  color: #111318;
+  font-weight: 620;
+}
+
+.together-primary:hover {
+  background: #fff;
+}
+
+.together-secondary {
+  border: 1px solid var(--line-strong);
+  color: var(--text-soft);
+}
+
+.together-secondary:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text);
+}
+
+.together-primary:active,
+.together-secondary:active {
+  transform: scale(0.97);
+}
+
+.together-primary:disabled,
+.together-secondary:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.together-invite-field {
+  width: 100%;
+  min-height: 82px;
+  margin: 18px 0 12px;
+  padding: 12px 13px;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: 0;
+  background: rgba(0, 0, 0, 0.17);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.55;
+  user-select: text;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.together-invite-field:focus {
+  border-color: rgba(var(--accent-rgb), 0.48);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.together-room {
+  overflow: hidden;
+}
+
+.together-room-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 23px 25px;
+  border-bottom: 1px solid var(--line);
+}
+
+.together-room-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.together-room-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.together-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(134, 221, 172, 0.92);
+  box-shadow: 0 0 14px rgba(134, 221, 172, 0.5);
+}
+
+.together-room-code {
+  margin-left: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.together-room-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(250px, 0.75fr);
+  gap: 28px;
+  padding: 25px;
+}
+
+.together-now {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 18px;
+}
+
+.together-now-cover {
+  width: 102px;
+  height: 102px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.28);
+}
+
+.together-now-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.together-now-copy {
+  min-width: 0;
+}
+
+.together-now-copy strong {
+  display: block;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.together-now-copy span {
+  display: block;
+  overflow: hidden;
+  margin-top: 7px;
+  color: var(--text-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.together-now-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 15px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.together-participants {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.together-person {
+  display: flex;
+  min-height: 53px;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.together-person-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.together-person-avatar svg {
+  width: 17px;
+  height: 17px;
+  opacity: 0.82;
+}
+
+.together-person-copy {
+  min-width: 0;
+}
+
+.together-person-copy strong {
+  display: block;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.together-person-copy small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.together-waiting {
+  display: grid;
+  min-height: 53px;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.together-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 25px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.together-foot-copy {
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.together-foot-copy code {
+  color: var(--text-soft);
+  font-family: inherit;
+}
+
+.together-error {
+  margin-top: 12px;
+  color: rgba(255, 174, 174, 0.82);
+  font-size: 10px;
+}
+
+.together-room-error {
+  padding: 0 25px 15px;
 }
 
 .outline-button {
@@ -1934,6 +2277,359 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 
 /* Queue */
+.together-chat-panel {
+  position: absolute;
+  z-index: 70;
+  inset: var(--titlebar-height) 0 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 220ms ease,
+    visibility 220ms ease;
+}
+
+.together-chat-panel.is-open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.together-chat-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 7, 10, 0.32);
+  opacity: 0;
+  backdrop-filter: blur(18px) saturate(78%);
+  transition: opacity 240ms ease;
+}
+
+.together-chat-panel.is-open .together-chat-backdrop {
+  opacity: 1;
+}
+
+.together-chat-sheet {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(680px, calc(100% - 110px));
+  height: min(68vh, 690px);
+  min-height: 390px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.05), transparent 42%),
+    rgba(14, 16, 21, 0.91);
+  box-shadow:
+    0 34px 110px rgba(0, 0, 0, 0.46),
+    inset 0 1px rgba(255, 255, 255, 0.045);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  opacity: 0;
+  backdrop-filter: blur(28px) saturate(118%);
+  transform: translate(-50%, calc(-50% + 13px)) scale(0.985);
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.together-chat-panel.is-open .together-chat-sheet {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.together-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.together-chat-header > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.together-chat-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 590;
+  letter-spacing: -0.02em;
+}
+
+.together-chat-header span:not(.together-chat-icon) {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.together-chat-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-soft);
+}
+
+.together-chat-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.together-chat-messages {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 22px;
+  scroll-behavior: smooth;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-width: thin;
+  user-select: text;
+}
+
+.together-chat-empty {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.together-chat-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.together-chat-message:first-child {
+  margin-top: 0;
+}
+
+.together-chat-message.is-mine {
+  flex-direction: row-reverse;
+}
+
+.together-chat-avatar {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-faint);
+}
+
+.together-chat-avatar svg {
+  width: 13px;
+  height: 13px;
+}
+
+.together-chat-message-copy {
+  max-width: min(74%, 470px);
+}
+
+.together-chat-message.is-mine .together-chat-message-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.together-chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 2px 5px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.together-chat-message.is-mine .together-chat-meta {
+  flex-direction: row-reverse;
+}
+
+.together-chat-bubble {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 6px 13px 13px;
+  background: rgba(255, 255, 255, 0.065);
+  color: rgba(244, 246, 249, 0.9);
+  font-size: 12px;
+  line-height: 1.62;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.together-chat-message.is-mine .together-chat-bubble {
+  border-color: rgba(var(--accent-rgb), 0.16);
+  border-radius: 13px 6px 13px 13px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text);
+}
+
+.together-chat-message .together-chat-bubble.is-sticker {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 38px;
+  line-height: 1.25;
+  filter: drop-shadow(0 7px 14px rgba(0, 0, 0, 0.2));
+}
+
+.together-chat-form {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 18px 17px;
+  border-top: 1px solid var(--line);
+}
+
+.together-chat-form textarea {
+  min-width: 0;
+  min-height: 39px;
+  max-height: 112px;
+  flex: 1;
+  resize: none;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.together-chat-form textarea:focus {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.together-chat-form button {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  background: rgba(245, 247, 250, 0.93);
+  color: #111318;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.together-chat-form button:hover {
+  background: #fff;
+}
+
+.together-chat-form button:active {
+  transform: scale(0.95);
+}
+
+.together-chat-form button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.together-chat-form button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.together-chat-form .together-sticker-toggle {
+  width: 34px;
+  height: 39px;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.together-chat-form .together-sticker-toggle:hover,
+.together-chat-form .together-sticker-toggle.is-active {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text);
+}
+
+.together-sticker-picker {
+  position: absolute;
+  right: 18px;
+  bottom: calc(100% + 10px);
+  left: 18px;
+  max-height: 310px;
+  overflow: auto;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(17, 19, 24, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  scrollbar-color: rgba(255, 255, 255, 0.11) transparent;
+  scrollbar-width: thin;
+  transform: translateY(8px) scale(0.985);
+  transform-origin: bottom right;
+  transition:
+    opacity 170ms ease,
+    transform 190ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.together-sticker-picker.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.together-sticker-label {
+  display: block;
+  margin: 8px 3px 6px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.together-sticker-label:first-child {
+  margin-top: 0;
+}
+
+.together-sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.together-sticker-grid button {
+  display: grid;
+  min-width: 0;
+  height: 42px;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 23px;
+  line-height: 1;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.together-sticker-grid button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: scale(1.08);
+}
+
+.together-sticker-grid button:active {
+  transform: scale(0.92);
+}
+
 .queue-panel {
   position: fixed;
   z-index: 80;

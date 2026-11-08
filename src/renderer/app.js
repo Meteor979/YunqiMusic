@@ -59,6 +59,25 @@ const state = {
   loginQrTimer: null,
   loginQrBusy: false,
   loginQrProvider: '',
+  together: {
+    status: 'idle',
+    role: null,
+    code: '',
+    invite: '',
+    provider: '',
+    participants: [],
+    connected: false,
+    busy: false,
+    error: '',
+  },
+  togetherSyncTimer: null,
+  togetherSyncTimeout: null,
+  togetherSyncBusy: false,
+  togetherApplying: false,
+  togetherPendingSync: null,
+  togetherChatOpen: false,
+  togetherMessages: [],
+  togetherUnread: 0,
 }
 
 const el = {
@@ -104,6 +123,7 @@ const el = {
   searchInput: $('#search-input'),
   searchResults: $('#search-results'),
   libraryContent: $('#library-content'),
+  togetherContent: $('#together-content'),
   playlistContent: $('#playlist-content'),
   trackMenu: $('#track-menu'),
   trackMore: $('#track-more'),
@@ -111,6 +131,16 @@ const el = {
   shuffleButton: $('#shuffle-button'),
   repeatButton: $('#repeat-button'),
   albumLoopButton: $('#album-loop-button'),
+  togetherChatButton: $('#together-chat-button'),
+  togetherChatBadge: $('#together-chat-badge'),
+  togetherChatPanel: $('#together-chat-panel'),
+  togetherChatMessages: $('#together-chat-messages'),
+  togetherChatForm: $('#together-chat-form'),
+  togetherChatInput: $('#together-chat-input'),
+  togetherChatSend: $('#together-chat-send'),
+  togetherStickerPicker: $('#together-sticker-picker'),
+  togetherStickerToggle: $('#together-sticker-toggle'),
+  togetherChatPlatform: $('#together-chat-platform'),
   equalizerPanel: $('#equalizer-panel'),
   equalizerBands: $('#equalizer-bands'),
   equalizerToggle: $('#equalizer-toggle'),
@@ -890,6 +920,7 @@ function updateTrackUI(track) {
       artwork: cover ? [{ src: cover, sizes: '512x512' }] : [],
     })
   }
+  if (state.together.role) renderTogether()
 }
 
 function resetLyrics(message = '') {
@@ -1228,14 +1259,17 @@ async function updatePalette(cover) {
 }
 
 async function updateLikeState(track, token) {
-  state.liked = false
-  el.likeButton.classList.remove('is-active')
+  const cachedLiked =
+    track.provider === state.primaryProvider &&
+    state.likedTracks.some((item) => item.id === track.id)
+  state.liked = cachedLiked
+  el.likeButton.classList.toggle('is-active', cachedLiked)
   try {
     const result = await api.getLikeState(track)
     if (token !== state.loadToken) return
-    state.liked = Boolean(result.liked)
+    state.liked = Boolean(result.liked) || cachedLiked
   } catch {
-    state.liked = false
+    state.liked = cachedLiked
   }
   el.likeButton.classList.toggle('is-active', state.liked)
 }
@@ -1243,6 +1277,7 @@ async function updateLikeState(track, token) {
 async function prepareTrack(track, { play = false } = {}) {
   const token = ++state.loadToken
   updateTrackUI(track)
+  scheduleTogetherSync(160)
   updatePalette(track.cover)
   loadLyrics(track, token)
   updateLikeState(track, token)
@@ -1271,9 +1306,17 @@ async function startPlayback(track = state.track, token = state.loadToken) {
   try {
     if (audio.src && audio.dataset.trackId === String(track.id)) {
       await ensureAudioGraph()
+      if (token !== state.loadToken) return
       await audio.play()
       return
     }
+
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load()
+    delete audio.dataset.trackId
+    state.playing = false
+    updatePlayButton()
 
     const result = await resolveSongUrl(track)
     if (token !== state.loadToken) return
@@ -1285,6 +1328,7 @@ async function startPlayback(track = state.track, token = state.loadToken) {
     }
 
     await ensureAudioGraph()
+    if (token !== state.loadToken) return
     audio.dataset.trackId = String(track.id)
     state.trackLoudnessDb = Number(result.gain || 0)
     state.playbackUrls = result.urls?.length
@@ -1295,8 +1339,10 @@ async function startPlayback(track = state.track, token = state.loadToken) {
     audio.src = result.url
 
     await audio.play()
+    if (token !== state.loadToken) return
     if (result.limited) showToast('这首歌目前仅能试听部分片段')
   } catch (error) {
+    if (token !== state.loadToken) return
     state.playing = false
     updatePlayButton()
     showToast(`播放失败：${friendlyError(error)}`, 3600)
@@ -1305,6 +1351,11 @@ async function startPlayback(track = state.track, token = state.loadToken) {
 
 async function togglePlayback() {
   if (!state.track) return
+  if (state.together.role === 'guest' && state.together.connected) {
+    await requestTogetherPlayback('toggle-playback')
+    return
+  }
+  if (blockTogetherGuestControl()) return
 
   if (audio.paused || !audio.src) {
     await startPlayback()
@@ -1318,6 +1369,7 @@ function findQueueIndex(trackId) {
 }
 
 async function playQueueIndex(index) {
+  if (blockTogetherGuestControl()) return
   if (!state.queue.length) return
   const nextIndex =
     ((Number(index) % state.queue.length) + state.queue.length) %
@@ -1328,6 +1380,7 @@ async function playQueueIndex(index) {
 }
 
 async function playTrackFromList(track, listKey) {
+  if (blockTogetherGuestControl()) return
   const list = state.sources[listKey]
   if (!Array.isArray(list) || !list.length) return
   state.queue = [...list]
@@ -1434,6 +1487,7 @@ async function setRoamMode(mode) {
 
 async function nextTrack({ automatic = false } = {}) {
   if (!state.queue.length) return
+  if (!automatic && blockTogetherGuestControl()) return
   if (automatic && state.repeatMode === 'one') {
     audio.currentTime = 0
     await audio.play()
@@ -1499,6 +1553,7 @@ function updateAlbumLoopUI() {
 
 async function previousTrack() {
   if (!state.queue.length) return
+  if (blockTogetherGuestControl()) return
   if (audio.currentTime > 3) {
     audio.currentTime = 0
     return
@@ -1759,6 +1814,542 @@ function renderLibrary() {
   $('#login-inline-button')?.addEventListener('click', () =>
     loginProvider(state.primaryProvider),
   )
+}
+
+function togetherProviderLabel(provider) {
+  return PROVIDER_LABELS[provider] || '当前平台'
+}
+
+function renderTogetherPerson(person) {
+  return `
+    <div class="together-person">
+      <span class="together-person-avatar">${icons.user}</span>
+      <span class="together-person-copy">
+        <strong>${escapeHTML(person.name || '好友')}</strong>
+        <small>${person.host ? '房主' : '参与者'}</small>
+      </span>
+    </div>
+  `
+}
+
+function renderTogether() {
+  if (!el.togetherContent) return
+  const room = state.together
+  el.togetherChatButton.hidden = !room.role
+  el.togetherChatBadge.hidden = !room.role || state.togetherUnread < 1
+  if (!room.role) {
+    const provider = state.track?.provider || state.primaryProvider
+    el.togetherContent.innerHTML = `
+      <div class="together-entry-grid">
+        <section class="together-card">
+          <h2>创建房间</h2>
+          <span class="together-platform">${escapeHTML(togetherProviderLabel(provider))}</span>
+          <p class="together-card-copy">由你控制曲目和进度，双方都可以播放或暂停。好友使用自己的账号收听同一平台的歌曲。</p>
+          <div class="together-actions">
+            <button class="together-primary" id="together-create-button" ${room.busy ? 'disabled' : ''}>
+              ${room.busy ? '正在创建' : '开启房间'}
+            </button>
+          </div>
+          ${room.error ? `<div class="together-error">${escapeHTML(room.error)}</div>` : ''}
+        </section>
+        <section class="together-card">
+          <h2>加入房间</h2>
+          <span class="together-platform">同一平台 · 最多两人</span>
+          <textarea class="together-invite-field" id="together-invite-input" placeholder="粘贴好友发来的邀请码"></textarea>
+          <div class="together-actions">
+            <button class="together-primary" id="together-join-button" ${room.busy ? 'disabled' : ''}>
+              ${room.busy ? '正在连接' : '加入房间'}
+            </button>
+          </div>
+        </section>
+      </div>
+    `
+    return
+  }
+
+  const participants = room.participants || []
+  const host = participants.find((person) => person.host)
+  const guest = participants.find((person) => !person.host)
+  const track = state.track
+  const trackMatches = track?.provider === room.provider
+  const nowPlaying = trackMatches
+    ? `
+      <div class="together-now">
+        <div class="together-now-cover">
+          ${track.cover ? `<img src="${escapeHTML(track.cover)}" alt="" />` : ''}
+        </div>
+        <div class="together-now-copy">
+          <strong>${escapeHTML(track.name || '')}</strong>
+          <span>${escapeHTML(track.artists?.join(' / ') || '')}</span>
+          <span class="together-now-status">
+            <i class="together-live-dot"></i>
+            ${state.playing ? '正在播放' : '已暂停'}
+          </span>
+        </div>
+      </div>
+    `
+    : `
+      <div class="together-now">
+        <div class="together-now-cover"></div>
+        <div class="together-now-copy">
+          <strong>等待房主播放</strong>
+          <span>${escapeHTML(togetherProviderLabel(room.provider))}</span>
+        </div>
+      </div>
+    `
+
+  el.togetherContent.innerHTML = `
+    <section class="together-room">
+      <div class="together-room-head">
+        <div class="together-room-title">
+          <i class="together-live-dot"></i>
+          <h2>房间已开启</h2>
+          <span class="together-room-code">${escapeHTML(room.code)}</span>
+        </div>
+        <div class="together-room-actions">
+          <button class="together-secondary" id="together-chat-open-button">聊天</button>
+          <button class="together-secondary" id="together-copy-button">复制邀请码</button>
+        </div>
+      </div>
+      <div class="together-room-body">
+        ${nowPlaying}
+        <div class="together-participants">
+          ${host ? renderTogetherPerson(host) : renderTogetherPerson({ name: '我', host: true })}
+          ${guest ? renderTogetherPerson(guest) : '<div class="together-waiting">等待好友加入</div>'}
+        </div>
+      </div>
+      ${room.error ? `<div class="together-error together-room-error">${escapeHTML(room.error)}</div>` : ''}
+      <div class="together-foot">
+        <span class="together-foot-copy">
+          ${room.role === 'host' ? '你正在主持房间' : '切歌与进度由房主控制，双方均可暂停'}
+          · <code>${escapeHTML(togetherProviderLabel(room.provider))}</code>
+        </span>
+        <button class="together-secondary" id="together-leave-button">离开房间</button>
+      </div>
+    </section>
+  `
+}
+
+async function createTogetherRoom() {
+  if (state.together.busy) return
+  const provider = state.track?.provider || state.primaryProvider
+  state.together.busy = true
+  state.together.error = ''
+  renderTogether()
+  try {
+    const room = await api.createTogetherRoom(provider)
+    state.together = {
+      ...state.together,
+      ...room,
+      busy: false,
+      error: '',
+    }
+    state.togetherMessages = []
+    state.togetherUnread = 0
+    setTogetherChatOpen(false)
+    updateTogetherSyncLoop()
+    scheduleTogetherSync(0)
+    showToast(`已开启${togetherProviderLabel(provider)}一起听房间`)
+  } catch (error) {
+    state.together.busy = false
+    state.together.error = friendlyError(error)
+  }
+  renderTogether()
+}
+
+async function joinTogetherRoom() {
+  if (state.together.busy) return
+  const input = $('#together-invite-input')
+  const invite = input?.value.trim()
+  if (!invite) {
+    showToast('请粘贴邀请码')
+    return
+  }
+  state.together.busy = true
+  state.together.error = ''
+  renderTogether()
+  try {
+    const profile = state.profiles[state.primaryProvider]
+    const room = await api.joinTogetherRoom(invite, profile?.name || '好友')
+    state.together = {
+      ...state.together,
+      ...room,
+      busy: false,
+      error: '',
+    }
+    state.togetherMessages = []
+    state.togetherUnread = 0
+    setTogetherChatOpen(false)
+    showToast(`已加入${togetherProviderLabel(room.provider)}一起听房间`)
+  } catch (error) {
+    state.together.busy = false
+    state.together.error = friendlyError(error)
+  }
+  renderTogether()
+}
+
+async function leaveTogetherRoom() {
+  stopTogetherSyncLoop()
+  state.togetherPendingSync = null
+  state.togetherApplying = false
+  await api.leaveTogetherRoom().catch(() => {})
+  state.together = {
+    ...state.together,
+    status: 'idle',
+    role: null,
+    code: '',
+    invite: '',
+    provider: '',
+    participants: [],
+    connected: false,
+    busy: false,
+    error: '',
+  }
+  state.togetherMessages = []
+  state.togetherUnread = 0
+  setTogetherChatOpen(false)
+  renderTogether()
+}
+
+async function copyTogetherInvite() {
+  if (!state.together.invite) return
+  try {
+    await navigator.clipboard.writeText(state.together.invite)
+    showToast('邀请码已复制')
+  } catch {
+    showToast('复制失败，请重试')
+  }
+}
+
+function stopTogetherSyncLoop() {
+  if (state.togetherSyncTimer) {
+    window.clearInterval(state.togetherSyncTimer)
+    state.togetherSyncTimer = null
+  }
+  if (state.togetherSyncTimeout) {
+    window.clearTimeout(state.togetherSyncTimeout)
+    state.togetherSyncTimeout = null
+  }
+}
+
+function updateTogetherSyncLoop() {
+  stopTogetherSyncLoop()
+  if (state.together.role !== 'host') return
+  state.togetherSyncTimer = window.setInterval(
+    () => scheduleTogetherSync(0, true),
+    1800,
+  )
+}
+
+function scheduleTogetherSync(delay = 180) {
+  if (state.together.role !== 'host' || !state.together.provider) return
+  if (state.togetherSyncTimeout) {
+    window.clearTimeout(state.togetherSyncTimeout)
+  }
+  state.togetherSyncTimeout = window.setTimeout(() => {
+    state.togetherSyncTimeout = null
+    syncTogetherState()
+  }, delay)
+}
+
+async function syncTogetherState() {
+  if (
+    state.together.role !== 'host' ||
+    !state.together.provider ||
+    !state.track ||
+    state.togetherSyncBusy
+  ) {
+    return
+  }
+  if (state.track.provider !== state.together.provider) {
+    state.together.error = `房间当前只同步${togetherProviderLabel(state.together.provider)}歌曲`
+    renderTogether()
+    return
+  }
+  state.togetherSyncBusy = true
+  try {
+    const result = await api.syncTogether({
+      track: state.track,
+      playing: state.playing,
+      position: audio.currentTime || 0,
+    })
+    if (!result?.ok) {
+      state.together.error =
+        result?.error || `房间当前只同步${togetherProviderLabel(state.together.provider)}歌曲`
+      renderTogether()
+    } else if (state.together.error) {
+      state.together.error = ''
+      renderTogether()
+    }
+  } catch {
+    // The periodic sync will retry without interrupting playback.
+  } finally {
+    state.togetherSyncBusy = false
+  }
+}
+
+async function applyTogetherSync(payload) {
+  if (state.together.role !== 'guest' || !payload?.snapshot?.track) return
+  state.togetherPendingSync = payload
+  if (state.togetherApplying) return
+  state.togetherApplying = true
+  try {
+    while (state.togetherPendingSync) {
+      const next = state.togetherPendingSync
+      state.togetherPendingSync = null
+      const snapshot = next.snapshot
+      if (snapshot.track.provider !== state.together.provider) continue
+
+      const changingTrack = state.track?.id !== snapshot.track.id
+      if (changingTrack) {
+        state.queue = [snapshot.track]
+        state.queueMode = 'together'
+        state.queueContext = 'together'
+        state.albumLoop = false
+        state.activeAlbumId = null
+        state.currentIndex = 0
+        state.sources.together = state.queue
+        renderQueue()
+        updateAlbumLoopUI()
+        await prepareTrack(snapshot.track, { play: snapshot.playing })
+      } else if (snapshot.playing && audio.paused) {
+        await startPlayback(state.track, state.loadToken)
+      } else if (!snapshot.playing && !audio.paused) {
+        audio.pause()
+      }
+
+      const elapsed = snapshot.playing
+        ? Math.max(0, (Date.now() - Number(next.serverTime || Date.now())) / 1000)
+        : 0
+      const target = Math.max(0, Number(snapshot.position || 0) + elapsed)
+      if (
+        Number.isFinite(target) &&
+        Number.isFinite(audio.duration) &&
+        Math.abs(audio.currentTime - target) > 0.9
+      ) {
+        audio.currentTime = Math.min(target, audio.duration || target)
+      }
+    }
+  } finally {
+    state.togetherApplying = false
+  }
+}
+
+function handleTogetherEvent({ event, payload } = {}) {
+  if (event === 'state' && payload) {
+    state.together = {
+      ...state.together,
+      ...payload,
+      busy: false,
+      error: payload.error || '',
+    }
+    updateTogetherSyncLoop()
+    renderTogether()
+    return
+  }
+  if (event === 'sync') {
+    applyTogetherSync(payload).catch(() => {})
+    return
+  }
+  if (event === 'control' && state.together.role === 'host') {
+    applyTogetherPlaybackControl(payload?.action).catch(() => {})
+    return
+  }
+  if (event === 'chat') {
+    appendTogetherChat(payload, false)
+    return
+  }
+  if (event === 'ended') {
+    stopTogetherSyncLoop()
+    state.together = {
+      ...state.together,
+      status: 'idle',
+      role: null,
+      code: '',
+      invite: '',
+      provider: '',
+      participants: [],
+      connected: false,
+    }
+    state.togetherMessages = []
+    state.togetherUnread = 0
+    setTogetherChatOpen(false)
+    renderTogether()
+    showToast(payload?.reason || '房间已关闭')
+  }
+}
+
+async function requestTogetherPlayback(action = 'toggle-playback') {
+  if (state.together.role !== 'guest' || !state.together.connected) {
+    return
+  }
+  try {
+    const result = await api.controlTogether(action)
+    if (!result?.ok) showToast(result?.error || '无法控制播放')
+  } catch (error) {
+    showToast(friendlyError(error))
+  }
+}
+
+async function applyTogetherPlaybackControl(action) {
+  if (!['play', 'pause', 'toggle-playback'].includes(action)) return
+  if (action === 'toggle-playback') {
+    if (audio.paused || !audio.src) await startPlayback()
+    else audio.pause()
+  } else if (action === 'play' && (audio.paused || !audio.src)) {
+    await startPlayback()
+  } else if (action === 'pause' && !audio.paused) {
+    audio.pause()
+  }
+  scheduleTogetherSync(0)
+}
+
+function blockTogetherGuestControl() {
+  if (state.together.role !== 'guest' || !state.together.connected) {
+    return false
+  }
+  showToast('播放由房主控制')
+  return true
+}
+
+function togetherChatTime(timestamp) {
+  const date = new Date(Number(timestamp) || Date.now())
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+function renderTogetherChat() {
+  el.togetherChatPlatform.textContent = state.together.provider
+    ? `${togetherProviderLabel(state.together.provider)} · ${state.together.role === 'host' ? '房主' : '参与者'}`
+    : ''
+  el.togetherChatBadge.hidden =
+    !state.together.role || state.togetherUnread < 1
+
+  if (!state.togetherMessages.length) {
+    el.togetherChatMessages.innerHTML =
+      '<div class="together-chat-empty">还没有消息</div>'
+    return
+  }
+
+  el.togetherChatMessages.innerHTML = state.togetherMessages
+    .map(
+      (message) => `
+        <div class="together-chat-message ${message.mine ? 'is-mine' : ''}" data-chat-id="${escapeHTML(message.id)}">
+          <span class="together-chat-avatar">${icons.user}</span>
+          <div class="together-chat-message-copy">
+            <span class="together-chat-meta">
+              <span>${escapeHTML(message.mine ? '我' : message.name || '好友')}</span>
+              <time>${togetherChatTime(message.sentAt)}</time>
+            </span>
+            <div class="together-chat-bubble ${message.kind === 'sticker' ? 'is-sticker' : ''}">${escapeHTML(message.text)}</div>
+          </div>
+        </div>
+      `,
+    )
+    .join('')
+  requestAnimationFrame(() => {
+    el.togetherChatMessages.scrollTop =
+      el.togetherChatMessages.scrollHeight
+  })
+}
+
+function setTogetherChatOpen(open) {
+  const canOpen = Boolean(state.together.role)
+  const nextOpen = Boolean(open) && canOpen
+  state.togetherChatOpen = nextOpen
+  el.togetherChatPanel.classList.toggle('is-open', nextOpen)
+  el.togetherChatPanel.setAttribute(
+    'aria-hidden',
+    nextOpen ? 'false' : 'true',
+  )
+  if (nextOpen) {
+    setQueueOpen(false)
+    setEqualizerOpen(false)
+    setProfileOpen(false)
+    state.togetherUnread = 0
+    renderTogetherChat()
+    requestAnimationFrame(() => el.togetherChatInput.focus())
+  } else {
+    setTogetherStickerPickerOpen(false)
+    el.togetherChatBadge.hidden = true
+  }
+}
+
+function setTogetherStickerPickerOpen(open) {
+  el.togetherStickerPicker.classList.toggle('is-open', Boolean(open))
+  el.togetherStickerPicker.setAttribute(
+    'aria-hidden',
+    open ? 'false' : 'true',
+  )
+  el.togetherStickerToggle.classList.toggle('is-active', Boolean(open))
+  el.togetherStickerToggle.setAttribute('aria-expanded', String(Boolean(open)))
+}
+
+function openTogetherChat() {
+  if (!state.together.role) return
+  setView('now')
+  setTogetherChatOpen(true)
+}
+
+function appendTogetherChat(message, mine = false) {
+  if (!message?.id || !message.text) return
+  if (state.togetherMessages.some((item) => item.id === message.id)) return
+  state.togetherMessages.push({ ...message, mine })
+  if (state.togetherMessages.length > 100) {
+    state.togetherMessages.splice(0, state.togetherMessages.length - 100)
+  }
+  if (!mine && !state.togetherChatOpen) {
+    state.togetherUnread += 1
+    showToast(
+      `${String(message.name || '好友').slice(0, 16)}：${String(message.text).slice(0, 42)}`,
+      3200,
+    )
+  }
+  renderTogetherChat()
+}
+
+async function sendTogetherMessage(text, kind = 'text') {
+  if (!state.together.role) return
+  const value = String(text || '').trim()
+  if (!value) return
+  const provider = state.together.provider || state.primaryProvider
+  const profile = state.profiles[provider] || state.profile
+  try {
+    const result = await api.chatTogether({
+      id: crypto.randomUUID(),
+      kind,
+      text: value,
+      name: profile?.name || (state.together.role === 'host' ? '房主' : '好友'),
+      sentAt: Date.now(),
+    })
+    if (!result?.ok) {
+      showToast(result?.error || '消息发送失败')
+      return
+    }
+    appendTogetherChat(result.message, true)
+    return true
+  } catch (error) {
+    showToast(friendlyError(error))
+  }
+}
+
+async function sendTogetherChat() {
+  const text = el.togetherChatInput.value.trim()
+  if (!text) return
+  const sent = await sendTogetherMessage(text, 'text')
+  if (!sent) return
+  el.togetherChatInput.value = ''
+  el.togetherChatInput.style.height = ''
+  el.togetherChatSend.disabled = true
+  setTogetherStickerPickerOpen(false)
+}
+
+async function sendTogetherSticker(sticker) {
+  const sent = await sendTogetherMessage(sticker, 'sticker')
+  if (sent) setTogetherStickerPickerOpen(false)
 }
 
 function renderSongTable(
@@ -2430,15 +3021,45 @@ async function toggleLike() {
   }
 
   const previous = state.liked
-  state.liked = !previous
+  const nextLiked = !previous
+  state.liked = nextLiked
   el.likeButton.classList.toggle('is-active', state.liked)
 
   try {
-    await api.setLike(state.track, state.liked)
+    const result = await api.setLike(state.track, nextLiked)
+    state.liked =
+      typeof result?.liked === 'boolean' ? result.liked : nextLiked
+    el.likeButton.classList.toggle('is-active', state.liked)
+    syncLikedTrack(state.track, state.liked)
+    showToast(state.liked ? '已加入我喜欢' : '已从我喜欢移除')
+    refreshLibrary(false).catch(() => {})
   } catch (error) {
     state.liked = previous
     el.likeButton.classList.toggle('is-active', previous)
     showToast(friendlyError(error))
+  }
+}
+
+function syncLikedTrack(track, liked) {
+  if (track.provider !== state.primaryProvider) return
+  const remaining = state.likedTracks.filter((item) => item.id !== track.id)
+  state.likedTracks = liked ? [track, ...remaining] : remaining
+  state.sources.likedTracks = state.likedTracks
+  renderLibrary()
+
+  if (
+    state.currentView === 'playlist' &&
+    state.activePlaylist?.id === `${state.primaryProvider}:liked`
+  ) {
+    const playlist = {
+      ...state.activePlaylist,
+      cover: state.likedTracks[0]?.cover || '',
+      trackCount: state.likedTracks.length,
+      tracks: state.likedTracks,
+    }
+    state.activePlaylist = playlist
+    state.sources.playlist = playlist.tracks
+    renderPlaylist(playlist)
   }
 }
 
@@ -2592,19 +3213,25 @@ function bindEvents() {
     el.currentTime.textContent = formatTime(value * duration)
   })
   el.progress.addEventListener('change', () => {
+    if (blockTogetherGuestControl()) return
     const duration = Number.isFinite(audio.duration)
       ? audio.duration
       : (state.track?.duration || 0) / 1000
     if (duration > 0) audio.currentTime = (Number(el.progress.value) / 1000) * duration
+    scheduleTogetherSync(0)
   })
 
   audio.addEventListener('play', () => {
     state.playing = true
     updatePlayButton()
+    if (state.together.role) renderTogether()
+    scheduleTogetherSync(0)
   })
   audio.addEventListener('pause', () => {
     state.playing = false
     updatePlayButton()
+    if (state.together.role) renderTogether()
+    scheduleTogetherSync(0)
   })
   audio.addEventListener('timeupdate', updateProgress)
   audio.addEventListener('loadedmetadata', updateProgress)
@@ -2629,6 +3256,54 @@ function bindEvents() {
   })
 
   $('#queue-toggle').addEventListener('click', () => setQueueOpen(true))
+  el.togetherChatButton.addEventListener('click', openTogetherChat)
+  $('#together-chat-close').addEventListener('click', () =>
+    setTogetherChatOpen(false),
+  )
+  $('#together-chat-backdrop').addEventListener('click', () =>
+    setTogetherChatOpen(false),
+  )
+  el.togetherChatForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    sendTogetherChat()
+  })
+  el.togetherStickerToggle.addEventListener('click', () => {
+    setTogetherStickerPickerOpen(
+      !el.togetherStickerPicker.classList.contains('is-open'),
+    )
+  })
+  el.togetherStickerPicker.addEventListener('click', (event) => {
+    const sticker = event.target.closest('[data-sticker]')
+    if (sticker) sendTogetherSticker(sticker.dataset.sticker)
+  })
+  el.togetherChatInput.addEventListener('focus', () => {
+    setTogetherStickerPickerOpen(false)
+  })
+  el.togetherChatPanel.addEventListener('click', (event) => {
+    if (
+      el.togetherStickerPicker.classList.contains('is-open') &&
+      !el.togetherStickerPicker.contains(event.target) &&
+      !el.togetherStickerToggle.contains(event.target)
+    ) {
+      setTogetherStickerPickerOpen(false)
+    }
+  })
+  el.togetherChatInput.addEventListener('input', () => {
+    el.togetherChatSend.disabled = !el.togetherChatInput.value.trim()
+    el.togetherChatInput.style.height = 'auto'
+    el.togetherChatInput.style.height =
+      `${Math.min(el.togetherChatInput.scrollHeight, 112)}px`
+  })
+  el.togetherChatInput.addEventListener('keydown', (event) => {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !event.isComposing
+    ) {
+      event.preventDefault()
+      sendTogetherChat()
+    }
+  })
   $('#equalizer-button').addEventListener('click', () => setEqualizerOpen(true))
   $('#queue-close').addEventListener('click', () => setQueueOpen(false))
   $('#queue-backdrop').addEventListener('click', () => setQueueOpen(false))
@@ -2744,6 +3419,19 @@ function bindEvents() {
   })
   $('#library-refresh-button').addEventListener('click', () => refreshLibrary())
   $('#playlist-back-button').addEventListener('click', () => setView(state.returnView))
+  el.togetherContent.addEventListener('click', (event) => {
+    if (event.target.closest('#together-create-button')) {
+      createTogetherRoom()
+    } else if (event.target.closest('#together-join-button')) {
+      joinTogetherRoom()
+    } else if (event.target.closest('#together-copy-button')) {
+      copyTogetherInvite()
+    } else if (event.target.closest('#together-chat-open-button')) {
+      openTogetherChat()
+    } else if (event.target.closest('#together-leave-button')) {
+      leaveTogetherRoom()
+    }
+  })
 
   $('.main-content').addEventListener('click', (event) => {
     const trackElement = event.target.closest('[data-track-id][data-list-key]')
@@ -2810,6 +3498,14 @@ function bindEvents() {
       return
     }
     if (event.key === 'Escape') {
+      if (state.togetherChatOpen) {
+        if (el.togetherStickerPicker.classList.contains('is-open')) {
+          setTogetherStickerPickerOpen(false)
+        } else {
+          setTogetherChatOpen(false)
+        }
+        return
+      }
       setTrackMenuOpen(false)
       setQueueOpen(false)
       setEqualizerOpen(false)
@@ -2823,15 +3519,31 @@ function bindEvents() {
       event.preventDefault()
       togglePlayback()
     } else if (event.key === 'ArrowRight') {
+      if (blockTogetherGuestControl()) return
       audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 5)
+      scheduleTogetherSync(0)
     } else if (event.key === 'ArrowLeft') {
+      if (blockTogetherGuestControl()) return
       audio.currentTime = Math.max(0, audio.currentTime - 5)
+      scheduleTogetherSync(0)
     }
   })
 
   if (navigator.mediaSession) {
-    navigator.mediaSession.setActionHandler('play', () => startPlayback())
-    navigator.mediaSession.setActionHandler('pause', () => audio.pause())
+    navigator.mediaSession.setActionHandler('play', () => {
+      if (state.together.role === 'guest' && state.together.connected) {
+        requestTogetherPlayback('play')
+      } else if (!blockTogetherGuestControl()) {
+        startPlayback()
+      }
+    })
+    navigator.mediaSession.setActionHandler('pause', () => {
+      if (state.together.role === 'guest' && state.together.connected) {
+        requestTogetherPlayback('pause')
+      } else if (!blockTogetherGuestControl()) {
+        audio.pause()
+      }
+    })
     navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack())
     navigator.mediaSession.setActionHandler('previoustrack', previousTrack)
   }
@@ -2910,6 +3622,7 @@ async function loadDefaultTrack() {
 
 async function initialize() {
   bindEvents()
+  api.onTogetherEvent(handleTogetherEvent)
   initializeAmbientCanvas()
   initializeTextMarquees()
   updatePlayButton()
@@ -2917,7 +3630,18 @@ async function initialize() {
   updateProfileUI()
   renderEqualizerBands()
   renderQueue()
+  renderTogether()
+  renderTogetherChat()
+  el.togetherChatSend.disabled = true
   updateQualityMenuSelection()
+  api
+    .getTogetherState()
+    .then((room) => {
+      state.together = { ...state.together, ...room }
+      updateTogetherSyncLoop()
+      renderTogether()
+    })
+    .catch(() => {})
 
   try {
     const local = await api.bootstrap()

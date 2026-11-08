@@ -29,6 +29,18 @@ contextBridge.exposeInMainWorld('yunqi', {
   checkUpdate: () => invoke('updates:check'),
   installUpdate: (update) => invoke('updates:install', update),
   getVersion: () => invoke('app:version'),
+  getTogetherState: () => invoke('together:get-state'),
+  createTogetherRoom: (provider) => invoke('together:create', provider),
+  joinTogetherRoom: (invite, name) => invoke('together:join', invite, name),
+  leaveTogetherRoom: () => invoke('together:leave'),
+  syncTogether: (snapshot) => invoke('together:sync', snapshot),
+  controlTogether: (action) => invoke('together:control', action),
+  chatTogether: (message) => invoke('together:chat', message),
+  onTogetherEvent: (callback) => {
+    const listener = (_event, value) => callback(value)
+    ipcRenderer.on('together:event', listener)
+    return () => ipcRenderer.removeListener('together:event', listener)
+  },
   webLogin: () => invoke('auth:web-login'),
   webQqLogin: () => invoke('auth:qq-web-login'),
   startKugouQrLogin: () => invoke('auth:kugou-qr-start'),
